@@ -86,4 +86,5 @@ powershell -ExecutionPolicy Bypass -File C:\Users\SoungYu\.codex\skills\scienced
 ## References
 
 - Read [references/workflow.md](references/workflow.md) when you need the exact run order or parameter choices.
+- Read [references/workflow.zh-CN.md](references/workflow.zh-CN.md) when the user prefers Chinese operational guidance.
 - Read [references/troubleshooting.md](references/troubleshooting.md) when the live session attaches but cannot expose PDF metadata or the viewer bytes.

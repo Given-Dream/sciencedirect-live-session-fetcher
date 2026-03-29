@@ -1,5 +1,7 @@
 # ScienceDirect Live Session Fetcher
 
+[中文说明](./README.zh-CN.md)
+
 Reusable scripts and a Codex skill for serial PDF fetching from ScienceDirect/Elsevier through a live, already authorized Microsoft Edge session.
 
 This workflow is for cases where:
