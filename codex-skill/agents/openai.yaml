@@ -1,0 +1,7 @@
+interface:
+  display_name: "ScienceDirect Live Session Fetcher"
+  short_description: "Fetch ScienceDirect PDFs through a live Edge session."
+  default_prompt: "Use $sciencedirect-live-session-fetcher to fetch ScienceDirect PDFs through my live logged-in Edge session."
+
+policy:
+  allow_implicit_invocation: false
