@@ -36,6 +36,7 @@ def main() -> int:
         "has_view_pdf": False,
         "has_pdf_metadata": False,
         "pdf_url": "",
+        "bot_verification_page": False,
         "challenge_page": False,
     }
 
@@ -50,11 +51,12 @@ def main() -> int:
         result["current_url"] = driver.current_url
         result["title"] = driver.title
         result["has_view_pdf"] = "View PDF" in html
-        result["challenge_page"] = (
+        result["bot_verification_page"] = (
             "Please wait" in html
             or "tdm-reservation" in html
             or "id.elsevier.com" in driver.current_url
         )
+        result["challenge_page"] = result["bot_verification_page"]
 
         match = PDF_RE.search(html)
         if match:

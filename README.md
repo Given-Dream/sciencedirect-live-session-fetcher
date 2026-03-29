@@ -7,8 +7,8 @@ Reusable scripts and a Codex skill for serial PDF fetching from ScienceDirect/El
 This workflow is for cases where:
 
 - the user has lawful access through personal or institutional sign-in
-- direct HTTP download is blocked by a challenge page, session gate, or browser-only flow
-- the user can manually sign in, pass the challenge, and keep the Edge window open
+- direct HTTP download is blocked by a bot verification page, session gate, or browser-only flow
+- the user can manually sign in, pass the bot verification page, and keep the Edge window open
 
 The scripts then attach to that live Edge session through the DevTools remote debugging port, open one article at a time, extract the `pdfDownload` metadata from the article page, and save the PDF from the in-browser PDF viewer.
 
@@ -55,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\launch_edge_clone_remote_debu
 2. In the opened Edge window:
 
 - sign in to ScienceDirect / institutional access
-- pass any challenge page manually
+- pass any bot verification page manually
 - open one representative article and click `View PDF`
 - keep the window open
 

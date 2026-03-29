@@ -2,14 +2,14 @@
 
 ## 适用场景
 
-当用户已经在 Microsoft Edge 中合法登录 ScienceDirect 或 Elsevier，且普通 HTTP 下载被 challenge、登录页或浏览器会话限制拦住时，使用这套流程。
+当用户已经在 Microsoft Edge 中合法登录 ScienceDirect 或 Elsevier，且普通 HTTP 下载被验证机器人页、登录页或浏览器会话限制拦住时，使用这套流程。
 
 ## 标准步骤
 
 1. 启动带远程调试端口的独立 Edge 会话。
 2. 让用户在该窗口中手动：
    - 登录
-   - 通过 challenge
+   - 通过验证机器人页
    - 打开一篇目标文章
    - 点击 `View PDF`
    - 保持窗口打开
@@ -44,5 +44,5 @@ powershell -ExecutionPolicy Bypass -File C:\Users\SoungYu\.codex\skills\scienced
 
 - 浏览器窗口必须保持打开。
 - 这套流程复用的是已授权会话，不提供新的访问权限。
-- 如果页面仍在 challenge 状态，不要强跑下载，先让用户在同一窗口中手动完成验证。
+- 如果页面仍在验证机器人页状态，不要强跑下载，先让用户在同一窗口中手动完成验证。
 - 优先重试失败条目，不要反复整批重跑。

@@ -4,7 +4,7 @@
 
 Common causes:
 
-- the page is still on a challenge or sign-in screen
+- the page is still on a bot verification or sign-in screen
 - the article page did not fully load
 - the session can see the article landing page but not the PDF metadata
 
@@ -29,17 +29,17 @@ What to do:
 - keep `InterItemSleepSeconds` at `5+`
 - manually test one failed DOI in the same session
 
-## The browser keeps showing challenge pages
+## The browser keeps showing bot verification pages
 
 Likely causes:
 
 - the session is not fully authorized yet
-- the current network path is being challenged
+- the current network path is triggering a bot verification page
 - the browser profile is too clean and needs a complete sign-in flow
 
 What to do:
 
-- finish the challenge in the same Edge window
+- finish the bot verification in the same Edge window
 - open a real article and its PDF manually first
 - avoid opening too many articles quickly
 

@@ -1,12 +1,12 @@
 # ScienceDirect 实时会话抓取器
 
-这是一套可复用脚本和 Codex skill，用来在**已经合法登录并通过挑战页**的 Microsoft Edge 会话里，串行下载 ScienceDirect/Elsevier 的 PDF。
+这是一套可复用脚本和 Codex skill，用来在**已经合法登录并通过验证机器人页**的 Microsoft Edge 会话里，串行下载 ScienceDirect/Elsevier 的 PDF。
 
 它适合下面这类情况：
 
 - 你已经拥有个人账号或机构授权访问
-- 直接用 `requests`、`curl` 或普通 HTTP 抓取会被挑战页、登录页或浏览器专属流程拦住
-- 你可以手动完成登录、过 challenge，并把 Edge 窗口保持打开
+- 直接用 `requests`、`curl` 或普通 HTTP 抓取会被验证机器人页、登录页或浏览器专属流程拦住
+- 你可以手动完成登录、通过验证机器人页，并把 Edge 窗口保持打开
 
 这套流程不会创建新的访问权限，也不会绕过付费墙。它只是复用你**已经通过授权的浏览器会话**。
 
@@ -53,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\launch_edge_clone_remote_debu
 需要做的事：
 
 1. 登录 ScienceDirect 或机构访问入口
-2. 手动通过 challenge
+2. 手动通过验证机器人页
 3. 打开一篇目标文章
 4. 点一次 `View PDF`
 5. 保持这个窗口不要关闭
@@ -67,7 +67,7 @@ python .\scripts\attach_sciencedirect_remote_debug.py --debugger-address 127.0.0
 理想状态：
 
 - `attached: true`
-- `challenge_page: false`
+- `bot_verification_page: false`
 - `has_pdf_metadata: true`
 
 ### 4. 运行批量抓取
@@ -111,11 +111,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_devtools_sciencedirect_fe
 
 - `PageWaitSeconds` 建议先用 `8`
 - `InterItemSleepSeconds` 建议先用 `5-8`
-- 出现 challenge 后不要立即全量重跑，先在同一个 Edge 会话里手动打开一篇文章并点击 `View PDF`
+- 出现验证机器人页后不要立即全量重跑，先在同一个 Edge 会话里手动打开一篇文章并点击 `View PDF`
 - 对失败条目优先做小批量重试，而不是整批重跑
 
 ## 更多说明
 
 - [详细流程](./docs/workflow.md)
 - [故障排查](./docs/troubleshooting.md)
-

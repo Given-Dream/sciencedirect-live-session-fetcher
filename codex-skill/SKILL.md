@@ -1,6 +1,6 @@
 ---
 name: sciencedirect-live-session-fetcher
-description: Use when the user has lawful ScienceDirect or Elsevier access in Microsoft Edge, direct HTTP fetching is blocked by login or challenge pages, and they want serial PDF downloading through a live browser session that stays open.
+description: Use when the user has lawful ScienceDirect or Elsevier access in Microsoft Edge, direct HTTP fetching is blocked by login or bot verification pages, and they want serial PDF downloading through a live browser session that stays open.
 ---
 
 # Sciencedirect Live Session Fetcher
@@ -11,7 +11,7 @@ This skill is appropriate when:
 
 - the target PDFs are on ScienceDirect or Elsevier pages
 - the user can sign in lawfully through personal or institutional access
-- direct requests are blocked by challenge pages, browser-only flows, or session gates
+- direct requests are blocked by bot verification pages, browser-only flows, or session gates
 - the user can keep the authorized Edge window open during the run
 
 Do not use this skill for unrelated publishers or to create access the user does not already have.
@@ -30,14 +30,14 @@ Do not use this skill for unrelated publishers or to create access the user does
 3. Let the user complete the manual part in that Edge window.
    They must:
    - sign in
-   - pass any challenge page
+   - pass any bot verification page
    - open a representative article
    - click `View PDF`
    - keep the window open
 
 4. If needed, probe the live session before a full batch.
    Use [scripts/attach_sciencedirect_remote_debug.py](scripts/attach_sciencedirect_remote_debug.py).
-   Read [references/troubleshooting.md](references/troubleshooting.md) if the probe still shows a challenge page or missing PDF metadata.
+   Read [references/troubleshooting.md](references/troubleshooting.md) if the probe still shows a bot verification page or missing PDF metadata.
 
 5. Run the serial fetcher.
    Use [scripts/run_devtools_sciencedirect_fetch.ps1](scripts/run_devtools_sciencedirect_fetch.ps1), which wraps [scripts/devtools_sciencedirect_serial_fetch.py](scripts/devtools_sciencedirect_serial_fetch.py).
@@ -80,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File C:\Users\SoungYu\.codex\skills\scienced
 
 - Stay inside the user's authorized session. Do not try to bypass access controls.
 - The Edge window with the live session must remain open during the run.
-- If the session is still on a challenge page, stop and let the user finish it manually.
+- If the session is still on a bot verification page, stop and let the user finish it manually.
 - Prefer retrying a small failed subset instead of rerunning the full list immediately.
 
 ## References

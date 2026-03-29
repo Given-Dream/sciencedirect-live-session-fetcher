@@ -28,7 +28,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\launch_edge_clone_remote_debu
 In the opened Edge window:
 
 1. complete account or institutional sign-in
-2. pass any challenge page
+2. pass any bot verification page
 3. open a representative article page
 4. click `View PDF` at least once
 5. keep that window open
@@ -48,7 +48,7 @@ python .\scripts\attach_sciencedirect_remote_debug.py `
 Healthy signs:
 
 - `attached: true`
-- `challenge_page: false`
+- `bot_verification_page: false`
 - `has_pdf_metadata: true`
 
 ## 4. Run the batch fetch
