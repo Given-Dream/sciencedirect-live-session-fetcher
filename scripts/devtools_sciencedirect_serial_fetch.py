@@ -18,12 +18,13 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
+import html
 import json
 import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
 import websocket
@@ -33,6 +34,7 @@ PDF_RE = re.compile(
     r'"pdfDownload":\{"isPdfFullText":(?:true|false),"urlMetadata":\{"queryParams":\{"md5":"([^"]+)","pid":"([^"]+)"\},"pii":"([^"]+)","pdfExtension":"([^"]+)","path":"([^"]+)"\}\}'
 )
 URL_RE = re.compile(r"https?://[^\s;,\)]+", flags=re.I)
+SIGNED_PDF_RE = re.compile(r"https://pdf\.sciencedirectassets\.com/[^\s\"'<>]+", flags=re.I)
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,8 +55,9 @@ def sanitize_name(text: str, fallback: str) -> str:
     return cleaned or fallback
 
 
-def make_target_name(number: str, doi: str) -> str:
-    return f"{int(number):03d}_{sanitize_name(doi, f'reference_{number}')}.pdf"
+def make_target_name(number: str, title: str, doi: str) -> str:
+    label = sanitize_name(title, "") or sanitize_name(doi, f"reference_{number}")
+    return f"{int(number):03d}-{label}.pdf"
 
 
 def extract_urls(note: str) -> list[str]:
@@ -98,6 +101,9 @@ class DevToolsClient:
         raw = self.http_get(f"{self.base}/json/new?{quote(url, safe=':/?&=%')}", method="PUT")
         return json.loads(raw)
 
+    def list_pages(self) -> list[dict]:
+        return json.loads(self.http_get(f"{self.base}/json"))
+
     def close_page(self, page_id: str) -> None:
         try:
             self.http_get(f"{self.base}/json/close/{page_id}")
@@ -126,7 +132,9 @@ class DevToolsClient:
             },
             msg_id=msg_id,
         )
-        return msg["result"]["result"].get("value")
+        if "error" in msg:
+            return None
+        return msg.get("result", {}).get("result", {}).get("value")
 
 
 def extract_pdf_bytes_from_viewer(devtools: DevToolsClient, ws_url: str) -> bytes | None:
@@ -134,6 +142,7 @@ def extract_pdf_bytes_from_viewer(devtools: DevToolsClient, ws_url: str) -> byte
         ws_url,
         """
 new Promise(resolve => {
+  const deadline = Date.now() + 15000;
   const tick = () => {
     const app = window.PDFViewerApplication;
     if (app && app.pdfDocument) {
@@ -145,6 +154,8 @@ new Promise(resolve => {
         }
         resolve(btoa(binary));
       }).catch(err => resolve('ERR:' + String(err)));
+    } else if (Date.now() > deadline) {
+      resolve('ERR:timeout_waiting_for_pdf_viewer');
     } else {
       setTimeout(tick, 1000);
     }
@@ -160,6 +171,90 @@ new Promise(resolve => {
     return base64.b64decode(value)
 
 
+def extract_file_param_from_viewer_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"chrome-extension", "extension"}:
+        return ""
+    values = parse_qs(parsed.query).get("file") or []
+    return values[0] if values else ""
+
+
+def extract_signed_pdf_url_from_text(text: str) -> str:
+    if not text:
+        return ""
+    decoded = html.unescape(text)
+    match = SIGNED_PDF_RE.search(decoded)
+    return match.group(0) if match else ""
+
+
+def current_signed_pdf_tabs(devtools: DevToolsClient) -> list[str]:
+    urls = []
+    for page in devtools.list_pages():
+        url = page.get("url", "")
+        file_url = extract_file_param_from_viewer_url(url)
+        candidate = file_url or url
+        if "pdf.sciencedirectassets.com" in candidate and candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def choose_signed_pdf_url(devtools: DevToolsClient, pii: str) -> str:
+    for url in current_signed_pdf_tabs(devtools):
+        if pii and pii in url:
+            return url
+    signed = current_signed_pdf_tabs(devtools)
+    return signed[0] if signed else ""
+
+
+def fetch_pdf_bytes_from_signed_url(url: str) -> bytes | None:
+    if not url:
+        return None
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/pdf,*/*",
+        },
+    )
+    try:
+        with urlopen(req, timeout=60) as resp:
+            data = resp.read()
+    except Exception:
+        return None
+    return data if data.startswith(b"%PDF-") else None
+
+
+def fetch_pdf_bytes_in_page(devtools: DevToolsClient, ws_url: str, pdf_url: str, *, msg_id: int = 31) -> bytes | None:
+    value = devtools.evaluate(
+        ws_url,
+        f"""
+new Promise(resolve => {{
+  fetch({json.dumps(pdf_url)}, {{ credentials: 'include' }})
+    .then(resp => resp.arrayBuffer())
+    .then(buf => {{
+      const data = new Uint8Array(buf);
+      const chunk = 0x8000;
+      let binary = '';
+      for (let i = 0; i < data.length; i += chunk) {{
+        binary += String.fromCharCode.apply(null, data.subarray(i, i + chunk));
+      }}
+      resolve(btoa(binary));
+    }})
+    .catch(err => resolve('ERR:' + String(err)));
+}})
+        """.strip(),
+        await_promise=True,
+        msg_id=msg_id,
+    )
+    if not value or (isinstance(value, str) and value.startswith("ERR:")):
+        return None
+    try:
+        data = base64.b64decode(value)
+    except Exception:
+        return None
+    return data if data.startswith(b"%PDF-") else None
+
+
 def process_row(
     devtools: DevToolsClient,
     row: dict[str, str],
@@ -167,7 +262,7 @@ def process_row(
     page_wait_seconds: int,
 ) -> dict[str, str]:
     article_url = choose_article_url(row)
-    target_name = make_target_name(row["number"], row.get("doi") or row.get("title") or row["number"])
+    target_name = make_target_name(row["number"], row.get("title", ""), row.get("doi", ""))
     target_path = pdf_dir / target_name
     if target_path.exists() and target_path.stat().st_size > 0:
         return {
@@ -207,6 +302,41 @@ def process_row(
         pdf_url = f"https://www.sciencedirect.com/{path}/{pii}{pdf_ext}?md5={md5}&pid={pid}"
         pdf_page = devtools.open_page(pdf_url)
         time.sleep(page_wait_seconds)
+        viewer_url = devtools.evaluate(pdf_page["webSocketDebuggerUrl"], "location.href", msg_id=20) or ""
+        viewer_html = devtools.evaluate(pdf_page["webSocketDebuggerUrl"], "document.documentElement.outerHTML", msg_id=22) or ""
+        signed_pdf_url = extract_file_param_from_viewer_url(viewer_url)
+        if not signed_pdf_url:
+            signed_pdf_url = extract_signed_pdf_url_from_text(viewer_url) or extract_signed_pdf_url_from_text(viewer_html)
+        if signed_pdf_url:
+            pdf_url = signed_pdf_url
+        else:
+            signed_pdf_url = choose_signed_pdf_url(devtools, pii)
+            if signed_pdf_url:
+                pdf_url = signed_pdf_url
+        pdf_bytes = fetch_pdf_bytes_in_page(devtools, article_page["webSocketDebuggerUrl"], pdf_url, msg_id=30)
+        if not pdf_bytes:
+            pdf_bytes = fetch_pdf_bytes_in_page(devtools, pdf_page["webSocketDebuggerUrl"], pdf_url, msg_id=31)
+        if pdf_bytes and pdf_bytes.startswith(b"%PDF-"):
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(pdf_bytes)
+            return {
+                **row,
+                "status": "downloaded",
+                "pdf_path": str(target_path),
+                "source_url": pdf_url,
+                "note": "in_page_fetch",
+            }
+        pdf_bytes = fetch_pdf_bytes_from_signed_url(pdf_url)
+        if pdf_bytes and pdf_bytes.startswith(b"%PDF-"):
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(pdf_bytes)
+            return {
+                **row,
+                "status": "downloaded",
+                "pdf_path": str(target_path),
+                "source_url": pdf_url,
+                "note": "signed_url_http_fetch",
+            }
         pdf_bytes = extract_pdf_bytes_from_viewer(devtools, pdf_page["webSocketDebuggerUrl"])
         if not pdf_bytes or not pdf_bytes.startswith(b"%PDF-"):
             return {
