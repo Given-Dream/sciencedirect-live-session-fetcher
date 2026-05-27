@@ -4,7 +4,7 @@
 
 Reusable scripts and a Codex skill for serial PDF fetching through a live, already authorized browser session.
 
-The strongest path in this repo is still ScienceDirect and Elsevier through a real Chromium DevTools session. On macOS, the recommended route is Google Chrome. The Chrome DevTools route also supports standard publisher PDF targets such as IEEE Xplore, but IEEE rows should start from the normal article detail page first and only then follow the authorized PDF iframe/link exposed by that session. The original Windows Edge route is still kept, and the repo also includes a mixed-publisher Firefox route for many mainstream publisher pages that expose a normal PDF link or `citation_pdf_url`.
+This repo started with a Windows Edge DevTools workflow for ScienceDirect and Elsevier. That original path is still kept as the main baseline of the project. The repo now also includes a macOS Chrome DevTools path built on the same Python fetcher, plus the Firefox mixed-publisher route for sites that expose a normal PDF link or `citation_pdf_url`.
 
 This workflow is for cases where:
 
@@ -14,15 +14,15 @@ This workflow is for cases where:
 
 ## Supported routes
 
-- `macOS Chrome DevTools route`
-  Recommended on this machine for ScienceDirect and Elsevier. The fetcher reuses a real Chrome session, reads article metadata, finds the short-lived signed PDF URL, and fetches the PDF inside the authorized page context. It also falls back to generic PDF metadata, links, iframe, embed, and object targets. For IEEE Xplore, it now normalizes `document`, `stamp`, and `stampPDF` URLs back to the article detail page before looking for the authorized PDF route.
 - `Windows Edge DevTools route`
-  Kept as a compatible route for Windows users. It uses the same Python fetcher through an Edge remote-debugging session.
+  The original core route of this repo. Best for ScienceDirect and Elsevier on Windows. The fetcher reuses a real Edge session, reads article metadata, finds the short-lived signed PDF URL, and fetches the PDF inside the authorized page context.
+- `macOS Chrome DevTools route`
+  An added route built on the same DevTools workflow for macOS users. It works especially well for ScienceDirect and Elsevier, and also falls back to generic publisher PDF metadata, links, iframe, embed, and object targets. For IEEE Xplore, the current DevTools fetcher normalizes `document`, `stamp`, and `stampPDF` URLs back to the article detail page before looking for the authorized PDF route.
 - `Firefox mixed-publisher route`
   Intended for publisher pages that expose a normal PDF link or metadata such as `citation_pdf_url`, `.pdf`, `/pdf`, or `Download PDF`.
-  This route has been exercised against publishers including MDPI, Springer Nature, Frontiers, AIP, ASCE, SSRN, and ICE / Géotechnique family pages, and is the intended fallback path for other mainstream publishers such as Wiley, Taylor & Francis, IEEE, ACM, ACS, Nature Portfolio, Oxford University Press, Cambridge University Press, and Sage when the page structure exposes a standard PDF target.
+  This route has been exercised against publishers including MDPI, Springer Nature, Frontiers, AIP, ASCE, SSRN, and ICE / Geotechnique family pages, and is the intended fallback path for other mainstream publishers such as Wiley, Taylor & Francis, IEEE, ACM, ACS, Nature Portfolio, Oxford University Press, Cambridge University Press, and Sage when the page structure exposes a standard PDF target.
 
-The scripts then attach to that live Chrome or Edge session through the DevTools remote debugging port, open one article at a time, extract ScienceDirect `pdfDownload` metadata or generic publisher PDF targets, and save the PDF from the authorized page context or in-browser PDF viewer.
+The scripts attach to a live Chrome or Edge session through the DevTools remote debugging port, open one article at a time, extract ScienceDirect `pdfDownload` metadata or generic publisher PDF targets, and save the PDF from the authorized page context or in-browser PDF viewer.
 
 ## Legal boundary
 
@@ -30,20 +30,20 @@ Use this only with access you are authorized to use. The workflow does not bypas
 
 ## What is included
 
-- `scripts/launch_chrome_clone_remote_debug_macos.sh`
-  Opens a separate macOS Chrome session with a dedicated user-data directory and a DevTools port. Supports direct per-process routing, extension disabling, and one-shot profiles.
 - `scripts/launch_edge_clone_remote_debug.ps1`
   Opens a separate Edge session with a dedicated user-data directory and a DevTools port. Supports direct per-process routing, extension disabling, and one-shot profiles.
+- `scripts/run_devtools_sciencedirect_fetch.ps1`
+  PowerShell wrapper around the Python fetcher for the original Windows Edge route.
+- `scripts/launch_chrome_clone_remote_debug_macos.sh`
+  Opens a separate macOS Chrome session with a dedicated user-data directory and a DevTools port. Supports direct per-process routing, extension disabling, and one-shot profiles.
+- `scripts/run_devtools_sciencedirect_fetch_macos.sh`
+  macOS shell wrapper around the same Python fetcher.
 - `scripts/attach_sciencedirect_remote_debug.py`
   Optional probe to verify that the current Chrome or Edge session can see ScienceDirect article metadata.
 - `scripts/devtools_sciencedirect_serial_fetch.py`
-  The Chrome/Edge DevTools serial fetcher. Processes one row at a time, prefers ScienceDirect signed PDF URLs fetched in the live page context, and falls back to generic publisher PDF targets such as IEEE PDF iframes.
+  The shared Chrome/Edge DevTools serial fetcher. It keeps the stable ScienceDirect signed-PDF path and now also falls back to generic publisher PDF targets such as IEEE PDF iframes.
 - `scripts/firefox_sciencedirect_serial_fetch.py`
   Visible Firefox serial fetcher for mixed publisher pages that expose a normal PDF link or publisher metadata.
-- `scripts/run_devtools_sciencedirect_fetch.ps1`
-  PowerShell wrapper around the Python fetcher.
-- `scripts/run_devtools_sciencedirect_fetch_macos.sh`
-  macOS shell wrapper around the same Python fetcher.
 - `examples/input-template.csv`
   Minimal CSV template.
 - `codex-skill/`
@@ -51,20 +51,59 @@ Use this only with access you are authorized to use. The workflow does not bypas
 
 ## Requirements
 
-- macOS
-- Google Chrome
 - Python 3.10+
 - Packages in `requirements.txt`
+- Windows + Microsoft Edge for the original DevTools route
+- macOS + Google Chrome for the added macOS route
 
 Install Python dependencies:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## Quick start
 
-1. Launch the recommended clean Chrome session for ScienceDirect and Elsevier on macOS:
+### Windows Edge quick start
+
+1. Launch the recommended clean Edge session for ScienceDirect and Elsevier:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launch_edge_clone_remote_debug.ps1 `
+  -DirectConnection `
+  -DisableExtensions `
+  -OneShotProfile `
+  -RemoteDebuggingPort 9222 `
+  -Url "https://doi.org/10.1016/j.measurement.2025.118930"
+```
+
+2. In the opened browser window:
+
+- sign in to ScienceDirect / institutional access
+- pass any bot verification page manually
+- open one representative article and click `View PDF`
+- keep the window open
+
+3. Optional probe:
+
+```powershell
+python .\scripts\attach_sciencedirect_remote_debug.py `
+  --browser edge `
+  --debugger-address 127.0.0.1:9222
+```
+
+4. Run the Edge serial fetcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_devtools_sciencedirect_fetch.ps1 `
+  -InputCsv .\examples\input-template.csv `
+  -OutDir .\out\run-001 `
+  -InterItemSleepSeconds 6
+```
+
+### macOS Chrome quick start
+
+1. Launch the recommended clean Chrome session for ScienceDirect and Elsevier:
 
 ```bash
 bash ./scripts/launch_chrome_clone_remote_debug_macos.sh \
@@ -99,6 +138,17 @@ bash ./scripts/run_devtools_sciencedirect_fetch_macos.sh \
   --inter-item-sleep-seconds 6
 ```
 
+5. For mixed publishers, use the Firefox route:
+
+```bash
+python3 ./scripts/firefox_sciencedirect_serial_fetch.py \
+  --input-csv ./examples/input-template.csv \
+  --out-dir ./out/firefox-run-001 \
+  --manual-ready-timeout 300 \
+  --page-wait-seconds 10 \
+  --inter-item-sleep-seconds 6
+```
+
 ## Input format
 
 The fetchers expect a UTF-8 CSV with these columns:
@@ -123,9 +173,9 @@ Each run writes:
 
 ## Notes from real runs
 
-- For ScienceDirect and Elsevier on macOS, a clean one-shot Chrome session with `--direct-connection --disable-extensions --one-shot-profile` is the recommended setup.
-- For off-campus IEEE access, sign in through the institutional route in the Chrome window first. The fetcher should then start from article pages, because direct `stamp.jsp` access can be treated like a personal-session PDF request and land on a misleading subscription page.
-- On Windows, the original Edge setup remains available with `-DirectConnection -DisableExtensions -OneShotProfile`.
+- For ScienceDirect and Elsevier on Windows, a clean one-shot Edge session with `-DirectConnection -DisableExtensions -OneShotProfile` has been a reliable default.
+- The macOS Chrome route keeps the same DevTools core and is the recommended added route for macOS users.
+- For off-campus IEEE access, sign in through the institutional route in the Chrome or Edge window first. The fetcher should then start from article pages, because direct `stamp.jsp` access can be treated like a personal-session PDF request and land on a misleading subscription page.
 - Short-lived ScienceDirect `pdf.sciencedirectassets.com` URLs may return `403 Forbidden` if fetched outside the live authorized page context, even when the URL itself looks valid.
 - If Chrome or Edge opens `extension://.../pdfjs/web/viewer.html?file=...`, a PDF-handling extension has intercepted the file. Restart the session with extensions disabled instead of reusing that viewer URL.
 - A probe can still be useful even when it reports a challenge flag, as long as it also exposes `has_view_pdf=true`, `has_pdf_metadata=true`, or a real `pdf_url`. In that case, test one row before running the full batch.
