@@ -10,7 +10,7 @@ Common causes:
 
 What to do:
 
-1. keep the same Edge window open
+1. keep the same Chrome or Edge window open
 2. manually open the target article in that window
 3. click `View PDF`
 4. rerun only the failed rows
@@ -28,7 +28,7 @@ What to do:
 - increase `PageWaitSeconds`
 - keep `InterItemSleepSeconds` at `5+`
 - manually test one failed DOI in the same session
-- if the page already exposed a signed `pdf.sciencedirectassets.com` URL, prefer rerunning with the current Edge DevTools path instead of relying only on the in-viewer extractor
+- if the page already exposed a signed `pdf.sciencedirectassets.com` URL, prefer rerunning with the current Chrome or Edge DevTools path instead of relying only on the in-viewer extractor
 
 ## `viewer_extract_failed` with a valid ScienceDirect signed URL
 
@@ -40,7 +40,7 @@ Common causes:
 
 What to do:
 
-1. keep the same Edge window open
+1. keep the same Chrome or Edge window open
 2. disable PDF-handling extensions in the next fresh session
 3. retry one row first
 4. use the current DevTools fetcher, which now prefers in-page fetch for ScienceDirect signed URLs before falling back to viewer extraction
@@ -55,7 +55,7 @@ Likely causes:
 
 What to do:
 
-- finish the bot verification in the same Edge window
+- finish the bot verification in the same Chrome or Edge window
 - open a real article and its PDF manually first
 - avoid opening too many articles quickly
 
@@ -73,21 +73,24 @@ What to do:
 
 Check:
 
-- Edge was launched with `--remote-debugging-port`
+- Chrome or Edge was launched with `--remote-debugging-port`
 - the port matches your command, for example `9222`
-- the Edge window is still open
+- the Chrome or Edge window is still open
 
-If needed, start a fresh session with:
+If needed, start a fresh Chrome session on macOS with:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\launch_edge_clone_remote_debug.ps1
+```bash
+bash ./scripts/launch_chrome_clone_remote_debug_macos.sh \
+  --direct-connection \
+  --disable-extensions \
+  --one-shot-profile
 ```
 
-## Existing main Edge windows interfere
+## Existing main Chrome or Edge windows interfere
 
-If you reuse a live profile, close all Edge windows first. The recommended path is to use the dedicated launcher and isolated user-data directory instead.
+If you reuse a live profile, close all browser windows first. The recommended path is to use the dedicated launcher and isolated user-data directory instead.
 
-## Edge opens `extension://.../pdfjs/web/viewer.html?file=...`
+## Chrome or Edge opens `extension://.../pdfjs/web/viewer.html?file=...`
 
 Common causes:
 
@@ -96,8 +99,8 @@ Common causes:
 
 What to do:
 
-1. start a fresh Edge session with `-DisableExtensions`
-2. prefer `-OneShotProfile` for a clean run
+1. start a fresh Chrome session with `--disable-extensions`
+2. prefer `--one-shot-profile` for a clean run
 3. do not reuse an old `file=` link after a few minutes; ScienceDirect signed URLs expire quickly
 
 ## Article rows with only DOI and no candidate URLs
@@ -110,13 +113,13 @@ This workflow does not solve access or routing problems by itself. If your insti
 
 ## Recommended default for ScienceDirect after repeated failures
 
-Use a fresh one-shot Edge session:
+Use a fresh one-shot Chrome session on macOS:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\launch_edge_clone_remote_debug.ps1 `
-  -DirectConnection `
-  -DisableExtensions `
-  -OneShotProfile `
-  -RemoteDebuggingPort 9222 `
-  -Url "https://doi.org/<doi>"
+```bash
+bash ./scripts/launch_chrome_clone_remote_debug_macos.sh \
+  --direct-connection \
+  --disable-extensions \
+  --one-shot-profile \
+  --remote-debugging-port 9222 \
+  --url "https://doi.org/<doi>"
 ```

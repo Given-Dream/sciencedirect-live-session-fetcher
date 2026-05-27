@@ -10,7 +10,7 @@ Common causes:
 
 What to do:
 
-1. keep the same Edge window open
+1. keep the same Chrome or Edge window open
 2. manually open the target article in that window
 3. click `View PDF`
 4. rerun only the failed rows
@@ -39,7 +39,7 @@ Likely causes:
 
 What to do:
 
-- finish the bot verification in the same Edge window
+- finish the bot verification in the same Chrome or Edge window
 - open a real article and its PDF manually first
 - avoid opening too many articles quickly
 
@@ -47,19 +47,22 @@ What to do:
 
 Check:
 
-- Edge was launched with `--remote-debugging-port`
+- Chrome or Edge was launched with `--remote-debugging-port`
 - the port matches your command, for example `9222`
-- the Edge window is still open
+- the Chrome or Edge window is still open
 
-If needed, start a fresh session with:
+If needed, start a fresh Chrome session on macOS with:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\launch_edge_clone_remote_debug.ps1
+```bash
+bash ./scripts/launch_chrome_clone_remote_debug_macos.sh \
+  --direct-connection \
+  --disable-extensions \
+  --one-shot-profile
 ```
 
-## Existing main Edge windows interfere
+## Existing main Chrome or Edge windows interfere
 
-If you reuse a live profile, close all Edge windows first. The recommended path is to use the dedicated launcher and isolated user-data directory instead.
+If you reuse a live profile, close all browser windows first. The recommended path is to use the dedicated launcher and isolated user-data directory instead.
 
 ## Article rows with only DOI and no candidate URLs
 

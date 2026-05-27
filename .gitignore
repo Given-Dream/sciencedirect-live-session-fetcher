@@ -1,8 +1,10 @@
 __pycache__/
 *.pyc
 .venv/
+.codex_deps/
 runtime/
 out/
+dist/
 *.log
 *.tmp
 Thumbs.db
