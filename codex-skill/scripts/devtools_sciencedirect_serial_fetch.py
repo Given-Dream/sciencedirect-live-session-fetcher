@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", required=True, help="Output directory")
     parser.add_argument("--debug-port", type=int, default=9222, help="Chrome or Edge remote debugging port")
     parser.add_argument("--page-wait-seconds", type=int, default=8, help="Wait after opening each tab")
-    parser.add_argument("--inter-item-sleep-seconds", type=int, default=5, help="Pause between rows")
+    parser.add_argument("--inter-item-sleep-seconds", type=int, default=8, help="Pause between rows")
     parser.add_argument("--limit", type=int, default=0, help="Only process the first N rows")
     return parser.parse_args()
 

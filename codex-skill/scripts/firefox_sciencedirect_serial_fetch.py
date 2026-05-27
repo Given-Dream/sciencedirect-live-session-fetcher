@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", required=True, help="Output directory")
     parser.add_argument("--page-wait-seconds", type=int, default=8, help="Wait after opening each page")
     parser.add_argument("--article-ready-timeout", type=int, default=75, help="Maximum seconds to wait for article PDF metadata")
-    parser.add_argument("--inter-item-sleep-seconds", type=int, default=6, help="Pause between rows")
+    parser.add_argument("--inter-item-sleep-seconds", type=int, default=8, help="Pause between rows")
     parser.add_argument("--manual-ready-timeout", type=int, default=180, help="Seconds to wait for manual sign-in")
     parser.add_argument("--profile-dir", default="", help="Optional persistent Firefox profile directory to reuse login state")
     parser.add_argument("--use-current-page-first", action="store_true", help="Use the current browser page for the first row after manual setup")

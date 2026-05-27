@@ -13,7 +13,7 @@ param(
 
     [int]$PageWaitSeconds = 8,
 
-    [int]$InterItemSleepSeconds = 5,
+    [int]$InterItemSleepSeconds = 8,
 
     [int]$Limit = 0
 )

@@ -7,7 +7,7 @@ python_exe="python3"
 script_path=""
 debug_port="9222"
 page_wait_seconds="8"
-inter_item_sleep_seconds="5"
+inter_item_sleep_seconds="8"
 limit="0"
 
 usage() {
@@ -21,7 +21,7 @@ Options:
   --script-path PATH            Fetcher script path.
   --debug-port PORT             Chrome DevTools port. Default: 9222.
   --page-wait-seconds SECONDS   Wait after opening each page. Default: 8.
-  --inter-item-sleep-seconds N  Pause between rows. Default: 5.
+  --inter-item-sleep-seconds N  Pause between rows. Default: 8.
   --limit N                     Only process the first N rows.
   -h, --help                    Show this help.
 USAGE
