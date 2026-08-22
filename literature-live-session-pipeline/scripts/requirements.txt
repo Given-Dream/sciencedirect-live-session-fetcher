@@ -1,0 +1,4 @@
+websocket-client
+pypdf
+pywinauto
+pywin32

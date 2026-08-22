@@ -259,3 +259,9 @@ python3 ./scripts/firefox_sciencedirect_serial_fetch.py \
 
 - [Workflow](./docs/workflow.md)
 - [Troubleshooting](./docs/troubleshooting.md)
+
+## 多来源文献 Skill
+
+仓库同时提供可直接安装的 [literature-live-session-pipeline](./literature-live-session-pipeline/) Skill。它保留原有出版商路线，并新增知网 PDF-only 实时会话流程：精确题名结果、文献详情页、精确可见文本 `PDF下载`。该路线会忽略隐藏休眠的验证 DOM，遇到真实可见验证则停止；拒绝 CAJ 内容，并允许“带权限加密标记但无需密码可正常读取”的 PDF 通过严格题名与页数核验。
+
+浏览器用户目录、登录会话、已下载论文和运行输出均明确排除在 Git 之外。

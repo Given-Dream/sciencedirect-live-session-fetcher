@@ -1,0 +1,2 @@
+number,title,doi,source_hint,entry_url,candidate_urls,section_paths,authors,journal,year,volume,issue,pages,ris_type,note
+1,Example paper title,10.1000/example,sciencedirect,https://www.sciencedirect.com/science/article/pii/S0000000000000000,,1 Introduction|2.1 THMD coupling,"Surname A;Surname B",Example Journal,2025,10,2,101-120,JOUR,

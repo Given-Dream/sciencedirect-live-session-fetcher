@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased - CNKI PDF-only live-session workflow
+
+### Added
+
+- Added the complete `literature-live-session-pipeline/` skill package alongside the existing focused `codex-skill/` package.
+- Added `cnki_pdf_live_fetch.py` and its PowerShell wrapper for the exact-title result -> article detail -> exact `PDF下载` workflow.
+- Added CNKI result, missing-row, summary, page-count, title-match, encryption-flag, and SHA-256 reporting.
+
+### Fixed
+
+- Ignore dormant hidden Tencent CAPTCHA markup on normal CNKI pages while still stopping on a real visible verification page.
+- Select the PDF control by exact visible text instead of the duplicated `cajDown` element ID, preventing accidental CAJ downloads.
+- Monitor both the configured batch directory and the Windows Downloads folder for `_blank` downloads.
+- Do not reject a password-free readable thesis merely because the PDF permissions flag reports encryption.
+- Preserve dotted CNKI thesis DOI suffixes in the documented extraction pattern.
+
+### Security and privacy
+
+- Browser profiles, authentication state, downloaded PDFs, and runtime output are excluded from the package and Git history.
+
 ## Unreleased - macOS Chrome DevTools update
 
 ### Added

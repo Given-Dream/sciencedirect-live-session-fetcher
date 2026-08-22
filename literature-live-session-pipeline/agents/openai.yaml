@@ -1,0 +1,4 @@
+interface:
+  display_name: "Literature Session Pipeline"
+  short_description: "Live-session fetch plus EndNote grouping."
+  default_prompt: "Use $literature-live-session-pipeline to fetch a paper batch through lawful browser sessions and build a grouped EndNote library."

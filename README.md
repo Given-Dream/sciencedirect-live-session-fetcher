@@ -184,3 +184,9 @@ Each run writes:
 
 - [Workflow](./docs/workflow.md)
 - [Troubleshooting](./docs/troubleshooting.md)
+
+## Multi-source literature skill
+
+The repository also includes the installable [literature-live-session-pipeline](./literature-live-session-pipeline/) skill. It preserves the original publisher routes while adding a CNKI PDF-only live-session workflow: exact-title result, article detail page, and exact visible `PDF下载` control. The CNKI route ignores dormant hidden CAPTCHA markup, stops for real visible verification, rejects CAJ payloads, and validates readable PDFs even when CNKI sets a permissions-encryption flag.
+
+Browser profiles, login sessions, downloaded papers, and runtime output are intentionally excluded from Git.
