@@ -1,18 +1,11 @@
 ---
 name: sciencedirect-live-session-fetcher
-description: Use when the user has lawful ScienceDirect/Elsevier or common publisher access in Chrome/Edge/Firefox, direct HTTP fetching is blocked by login or bot verification pages, and they want serial PDF downloading through a live browser session that stays open.
+description: Download scholarly PDFs serially through a lawful live Chrome, Edge, or Firefox session when direct HTTP is blocked by login, institutional authentication, bot checks, attachment handling, or an internal PDF viewer. Use for ScienceDirect/Elsevier, Wiley Online Library and AGU/Wiley, Canadian Science Publishing, AIP Publishing, IEEE Xplore, and other publisher pages that expose an authorized PDF route.
 ---
 
-# Sciencedirect Live Session Fetcher
+# Publisher Live Session Fetcher
 
 Use this skill for the workflow where the browser session is the source of truth.
-
-This skill is appropriate when:
-
-- the target PDFs are on ScienceDirect/Elsevier pages, IEEE Xplore PDF pages, or common DOI publisher pages that expose a PDF link
-- the user can sign in lawfully through personal or institutional access
-- direct requests are blocked by bot verification pages, browser-only flows, or session gates
-- the user can keep the authorized Chrome, Edge, or Firefox window open during the run
 
 Do not use this skill for unrelated publishers or to create access the user does not already have.
 
@@ -21,10 +14,10 @@ Do not use this skill for unrelated publishers or to create access the user does
 1. Prepare or confirm the input CSV.
    Required columns: `number`, `doi`.
    Optional columns: `title`, `note`, `year`, `journal`, `formatted`.
-   If `note` contains candidate URLs, the fetcher prefers `doi.org` and `sciencedirect.com` links first.
+   If `note` contains candidate URLs, retain them. The fetcher opens the DOI/article page first and uses PDF-like note URLs as authorized delivery candidates, which is especially useful for AIP and IEEE.
 
 2. Choose a browser route.
-   On macOS, prefer the Chrome DevTools route for ScienceDirect, Elsevier, and IEEE Xplore batches. It reuses a real browser session, handles signed ScienceDirect PDF URLs, and also falls back to generic PDF metadata/link/iframe targets. For IEEE Xplore, start from the normal article detail page first; direct `stamp.jsp` access can be treated like a personal PDF request when the institutional route has not been established. The Windows Edge DevTools route is still available for Windows.
+   Prefer the Chromium DevTools route on macOS and Windows for ScienceDirect, Elsevier, Wiley/AGU, Canadian Science Publishing, AIP, and IEEE. It captures authenticated network resources, attachment downloads, and Chromium's internal PDF viewer targets. For IEEE Xplore, start from the normal article detail page so the institutional route can establish itself before `stamp.jsp` or `stampPDF/getPDF.jsp` is used.
    Use the Firefox Selenium route for mixed batches across MDPI, Springer Nature, Frontiers, AIP, ASCE, SSRN, ICE / Géotechnique family pages, and similar DOI landing pages when the pages expose a normal PDF link or `citation_pdf_url`.
    Treat the same Firefox route as the intended fallback for other mainstream publisher pages such as Wiley, Taylor & Francis, IEEE, ACM, ACS, Nature Portfolio, Oxford University Press, Cambridge University Press, and Sage when the page structure exposes a standard PDF target.
 
@@ -50,6 +43,19 @@ Do not use this skill for unrelated publishers or to create access the user does
    Python dependencies live in [scripts/requirements.txt](scripts/requirements.txt).
    For ScienceDirect and Elsevier, the current stable path is: article page -> `pdfDownload` metadata -> signed `pdf.sciencedirectassets.com` URL -> fetch inside the live page context. This avoids short-lived signed URL failures that happen when an external HTTP client gets `403 Forbidden`. For IEEE Xplore, the Chrome DevTools route resolves DOI/search/stamp inputs to the article detail page, then follows the authorized PDF route exposed by that page.
    For mixed Firefox batches, use [scripts/firefox_sciencedirect_serial_fetch.py](scripts/firefox_sciencedirect_serial_fetch.py). It first tries ScienceDirect `pdfDownload` metadata, then generic publisher PDF metadata and visible PDF links.
+
+   The Chromium route uses this cascade for non-Elsevier publishers:
+   1. same-origin fetch inside the authorized article page
+   2. `Network.loadNetworkResource` with the live profile's credentials, without exporting cookies
+   3. navigation-time response capture and browser download events
+   4. same-origin extraction from Edge/Chrome's underlying PDF iframe target
+   5. PDF.js viewer extraction as a final fallback
+
+   Publisher adapters:
+   - Wiley and AGU/Wiley: prefer the resolved journal subdomain and try `/doi/pdfdirect/<doi>` before `/doi/pdf/<doi>`
+   - Canadian Science Publishing: try `/doi/pdf/<doi>?download=true`, then the non-query route
+   - AIP: inspect metadata, visible links, raw page HTML, and PDF-like URLs supplied in `note`; try the official `article-pdf` route and its `download=true` variant
+   - IEEE Xplore: resolve the DOI to `document/<arnumber>`, then try the authorized `stamp.jsp` and `stampPDF/getPDF.jsp` chain
 
 7. Review the run output and retry only failed rows.
    The fetcher writes:
@@ -98,7 +104,18 @@ Run the serial batch:
 bash ~/.codex/skills/sciencedirect-live-session-fetcher/scripts/run_devtools_sciencedirect_fetch_macos.sh \
   --input-csv /path/to/input.csv \
   --out-dir /path/to/out-dir \
+  --download-wait-seconds 45 \
   --inter-item-sleep-seconds 6
+```
+
+Run the Windows Edge batch:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\sciencedirect-live-session-fetcher\scripts\run_devtools_sciencedirect_fetch.ps1" `
+  -InputCsv "D:\path\input.csv" `
+  -OutDir "D:\path\publisher-pdfs" `
+  -DownloadWaitSeconds 45 `
+  -InterItemSleepSeconds 6
 ```
 
 Run a mixed-publisher Firefox batch:
@@ -121,14 +138,21 @@ python3 ~/.codex/skills/sciencedirect-live-session-fetcher/scripts/firefox_scien
 - If Chrome or Edge opens `extension://.../pdfjs/web/viewer.html?file=...`, the PDF is being handled by a browser extension. Prefer restarting the DevTools browser session with extensions disabled; the `file=` value is a short-lived ScienceDirect signed URL and may expire within minutes.
 - A probe result can be mixed. If `has_view_pdf=true` and `has_pdf_metadata=true`, a single-row probe download is often worth trying even when the page still reports a challenge flag. Do not jump straight to the full batch until that probe succeeds.
 - For non-ScienceDirect publishers, only use PDF URLs exposed in page metadata or visible links such as `citation_pdf_url`, `.pdf`, `/pdf`, `Download PDF`, or authorized delivery endpoints.
+- Treat `network_resource_non_pdf:200` as an authenticated endpoint returning HTML, not as a valid PDF. Keep the row missing and report the route instead of saving the HTML with a `.pdf` extension.
+- Do not export or replay browser cookies. Use page-context fetch, CDP resource loading, response capture, or the PDF target's own context.
 - For IEEE Xplore, prefer using an IEEE article URL such as `https://ieeexplore.ieee.org/document/<arnumber>` in the CSV `note` column. `stamp.jsp` and `stampPDF/getPDF.jsp` inputs are normalized back to the article page before PDF discovery.
 - For off-campus IEEE access, let the user complete institutional sign-in inside the Chrome DevTools window before running the batch.
+- For Wiley, AIP, CSP, or IEEE challenge pages, let the user complete the publisher or institutional flow in the same dedicated browser. Never automate CAPTCHA solving.
+- Omit `--direct-connection` when institutional access depends on a configured proxy or campus VPN route.
 - Prefer retrying a small failed subset instead of rerunning the full list immediately.
 
 ## Lessons Learned
 
 - For ScienceDirect and Elsevier on macOS, a clean one-shot Chrome session with `--direct-connection --disable-extensions --one-shot-profile` is the best default starting point.
 - IEEE Xplore has been validated through the same Chrome DevTools route when the live session exposes `stampPDF/getPDF.jsp`.
+- Wiley and AGU/Wiley have been validated through resolved journal subdomains. Do not force all `10.1002` DOIs through the generic `onlinelibrary.wiley.com` host.
+- Edge's built-in PDF viewer exposes the real publisher PDF as a child target. Fetch from that child target's own origin when article-context JavaScript is blocked by CORS.
+- Canadian Science Publishing and AIP may return an HTML article/authentication page with HTTP 200 from a PDF-looking URL. Validate the `%PDF-` signature before saving.
 - For Windows, the original Edge route with `-DirectConnection -DisableExtensions -OneShotProfile` remains available.
 - Firefox can work well for mixed non-Elsevier publishers, but ScienceDirect is more sensitive to automated Firefox sessions and can fall back to `please wait` or signed-URL failures.
 - The ScienceDirect `pdf.sciencedirectassets.com` links are short-lived signed URLs. If you extract them, use them immediately inside the authorized browser session or in the page context; do not treat them as durable links.

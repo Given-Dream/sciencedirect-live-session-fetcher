@@ -7,6 +7,7 @@ python_exe="python3"
 script_path=""
 debug_port="9222"
 page_wait_seconds="8"
+download_wait_seconds="45"
 inter_item_sleep_seconds="8"
 limit="0"
 
@@ -21,6 +22,7 @@ Options:
   --script-path PATH            Fetcher script path.
   --debug-port PORT             Chrome DevTools port. Default: 9222.
   --page-wait-seconds SECONDS   Wait after opening each page. Default: 8.
+  --download-wait-seconds N     Wait for a PDF response/download. Default: 45.
   --inter-item-sleep-seconds N  Pause between rows. Default: 8.
   --limit N                     Only process the first N rows.
   -h, --help                    Show this help.
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --page-wait-seconds)
       page_wait_seconds="${2:?Missing value for --page-wait-seconds}"
+      shift 2
+      ;;
+    --download-wait-seconds)
+      download_wait_seconds="${2:?Missing value for --download-wait-seconds}"
       shift 2
       ;;
     --inter-item-sleep-seconds)
@@ -106,6 +112,7 @@ args=(
   "--out-dir" "$out_dir"
   "--debug-port" "$debug_port"
   "--page-wait-seconds" "$page_wait_seconds"
+  "--download-wait-seconds" "$download_wait_seconds"
   "--inter-item-sleep-seconds" "$inter_item_sleep_seconds"
 )
 

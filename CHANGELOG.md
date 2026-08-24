@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased - publisher adapters and PDF identity validation
+
+### Added
+
+- Added explicit Chromium live-session adapters for Wiley and AGU/Wiley, Canadian Science Publishing, AIP Publishing, and IEEE Xplore.
+- Added same-origin page fetch, credentialed `Network.loadNetworkResource`, navigation/download capture, Chromium PDF child-target extraction, and PDF.js fallback handling for non-Elsevier routes.
+- Added configurable download-event waiting to the Python fetcher and the Windows/macOS wrappers.
+
+### Fixed
+
+- Require the `%PDF-` signature before saving any publisher response.
+- Filter publisher-specific candidates by DOI or IEEE article number so unrelated same-domain documents cannot be misidentified as the requested paper.
+- Keep per-row failures isolated so one publisher error does not stop a mixed batch.
+
+### Validation
+
+- Revalidated the installed Skill structure and script syntax.
+- Confirmed successful Wiley/AGU downloads in authorized sessions and safe failure for PDF endpoints that return HTML, HTTP 403, login pages, or challenge pages.
+- Confirmed that an unrelated AIP user-guide PDF is rejected instead of being counted as the requested DOI.
+
 ## Unreleased - CNKI PDF-only live-session workflow
 
 ### Added

@@ -4,7 +4,7 @@
 
 Reusable scripts and a Codex skill for serial PDF fetching through a live, already authorized browser session.
 
-This repo started with a Windows Edge DevTools workflow for ScienceDirect and Elsevier. That original path is still kept as the main baseline of the project. The repo now also includes a macOS Chrome DevTools path built on the same Python fetcher, plus the Firefox mixed-publisher route for sites that expose a normal PDF link or `citation_pdf_url`.
+This repo started with a Windows Edge DevTools workflow for ScienceDirect and Elsevier. That original path is still kept as the main baseline of the project. The shared Chromium fetcher now also has explicit live-session adapters for Wiley and AGU/Wiley, Canadian Science Publishing, AIP Publishing, and IEEE Xplore, plus a Firefox mixed-publisher route for sites that expose a normal PDF link or `citation_pdf_url`.
 
 This workflow is for cases where:
 
@@ -17,12 +17,12 @@ This workflow is for cases where:
 - `Windows Edge DevTools route`
   The original core route of this repo. Best for ScienceDirect and Elsevier on Windows. The fetcher reuses a real Edge session, reads article metadata, finds the short-lived signed PDF URL, and fetches the PDF inside the authorized page context.
 - `macOS Chrome DevTools route`
-  An added route built on the same DevTools workflow for macOS users. It works especially well for ScienceDirect and Elsevier, and also falls back to generic publisher PDF metadata, links, iframe, embed, and object targets. For IEEE Xplore, the current DevTools fetcher normalizes `document`, `stamp`, and `stampPDF` URLs back to the article detail page before looking for the authorized PDF route.
+  An added route built on the same DevTools workflow for macOS users. It works especially well for ScienceDirect and Elsevier and shares the explicit Wiley/AGU, Canadian Science Publishing, AIP, and IEEE adapters used by the Windows route. It also falls back to generic publisher PDF metadata, links, iframe, embed, and object targets.
 - `Firefox mixed-publisher route`
   Intended for publisher pages that expose a normal PDF link or metadata such as `citation_pdf_url`, `.pdf`, `/pdf`, or `Download PDF`.
   This route has been exercised against publishers including MDPI, Springer Nature, Frontiers, AIP, ASCE, SSRN, and ICE / Geotechnique family pages, and is the intended fallback path for other mainstream publishers such as Wiley, Taylor & Francis, IEEE, ACM, ACS, Nature Portfolio, Oxford University Press, Cambridge University Press, and Sage when the page structure exposes a standard PDF target.
 
-The scripts attach to a live Chrome or Edge session through the DevTools remote debugging port, open one article at a time, extract ScienceDirect `pdfDownload` metadata or generic publisher PDF targets, and save the PDF from the authorized page context or in-browser PDF viewer.
+The scripts attach to a live Chrome or Edge session through the DevTools remote debugging port, open one article at a time, discover the publisher's authorized PDF route, and save the PDF from the page context, credentialed DevTools resource loader, navigation response, browser download event, or internal PDF viewer. Every saved file must have a `%PDF-` signature, and publisher-specific candidates must match the current DOI or IEEE article number.
 
 ## Legal boundary
 
@@ -39,9 +39,9 @@ Use this only with access you are authorized to use. The workflow does not bypas
 - `scripts/run_devtools_sciencedirect_fetch_macos.sh`
   macOS shell wrapper around the same Python fetcher.
 - `scripts/attach_sciencedirect_remote_debug.py`
-  Optional probe to verify that the current Chrome or Edge session can see ScienceDirect article metadata.
+  Optional probe to verify that the current Chrome or Edge session can see article metadata and publisher PDF signals.
 - `scripts/devtools_sciencedirect_serial_fetch.py`
-  The shared Chrome/Edge DevTools serial fetcher. It keeps the stable ScienceDirect signed-PDF path and now also falls back to generic publisher PDF targets such as IEEE PDF iframes.
+  The shared Chrome/Edge DevTools serial fetcher. It keeps the stable ScienceDirect signed-PDF path and adds explicit Wiley/AGU, Canadian Science Publishing, AIP, and IEEE routes with DOI/article identity filtering.
 - `scripts/firefox_sciencedirect_serial_fetch.py`
   Visible Firefox serial fetcher for mixed publisher pages that expose a normal PDF link or publisher metadata.
 - `examples/input-template.csv`

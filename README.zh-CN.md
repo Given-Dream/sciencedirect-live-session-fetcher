@@ -4,7 +4,7 @@
 
 这是一套可复用脚本和 Codex skill，用于在“用户已经合法完成授权”的浏览器会话中，串行下载论文 PDF。
 
-这个仓库最初的主线是 Windows 下的 Edge DevTools 路线，用来处理 ScienceDirect / Elsevier 的实时会话下载。现在仓库仍然保留这条原始主线，同时在同一个 Python 抓取器基础上新增了 macOS Chrome DevTools 路线，并继续保留 Firefox 混合出版商路线。
+这个仓库最初的主线是 Windows 下的 Edge DevTools 路线，用来处理 ScienceDirect / Elsevier 的实时会话下载。现在仓库仍然保留这条原始主线，并在同一个 Chromium 抓取器中加入 Wiley / AGU、Canadian Science Publishing、AIP Publishing 和 IEEE Xplore 的显式实时会话适配器，同时继续保留 macOS Chrome 与 Firefox 混合出版商路线。
 
 ## 适用场景
 
@@ -22,7 +22,7 @@
 
 - `macOS Chrome DevTools 路线`
   这是在原有 DevTools 流程上补充出来的 macOS 路线。
-  它同样适合 ScienceDirect 和 Elsevier，也能 fallback 到通用 PDF 元数据、链接、iframe、embed、object 入口。对于 IEEE Xplore，当前脚本会优先把 `document`、`stamp.jsp`、`stampPDF/getPDF.jsp` 规整回论文详情页，再从该页面寻找授权后的 PDF 入口。
+  它同样适合 ScienceDirect 和 Elsevier，并共享 Windows 路线中的 Wiley / AGU、Canadian Science Publishing、AIP 和 IEEE 显式适配器，也能 fallback 到通用 PDF 元数据、链接、iframe、embed、object 入口。
 
 - `Firefox 混合出版商路线`
   适合页面本身已经暴露正常 PDF 入口的出版商。
@@ -34,7 +34,7 @@
 
   前提是页面结构确实暴露了标准 PDF 目标，而不是完全被站内脚本或挑战页包裹。
 
-脚本会通过 DevTools 远程调试端口连接到真实浏览器会话，逐篇打开文章，提取 ScienceDirect 的 `pdfDownload` 元数据或通用出版商 PDF 入口，再从授权页面上下文或浏览器 PDF viewer 中保存 PDF。
+脚本会通过 DevTools 远程调试端口连接到真实浏览器会话，逐篇打开文章，寻找出版社授权的 PDF 路由，再通过页面上下文、带当前会话凭据的 DevTools 资源加载、导航响应、浏览器下载事件或内置 PDF viewer 保存文件。所有文件必须通过 `%PDF-` 文件头校验，出版社专用候选地址还必须匹配当前 DOI 或 IEEE 文献号。
 
 ## 法律与边界
 
@@ -69,11 +69,11 @@
   macOS 下的 Chrome DevTools Python 下载器包装脚本。
 
 - `scripts/attach_sciencedirect_remote_debug.py`
-  可选 probe，用来检查当前 Chrome 或 Edge 会话是否已经能看到 ScienceDirect 文章元数据与 PDF 入口。
+  可选 probe，用来检查当前 Chrome 或 Edge 会话是否已经能看到文章元数据与出版社 PDF 信号。
 
 - `scripts/devtools_sciencedirect_serial_fetch.py`
   Chrome / Edge 共用的 DevTools 串行下载器。
-  保留了原来稳定的 ScienceDirect 签名 PDF 路径，同时也支持 IEEE 这类通用 PDF iframe/link 入口。
+  保留了原来稳定的 ScienceDirect 签名 PDF 路径，并增加 Wiley / AGU、Canadian Science Publishing、AIP 和 IEEE 的显式路由及 DOI / 文献号身份过滤。
 
 - `scripts/firefox_sciencedirect_serial_fetch.py`
   可见 Firefox 串行下载器。

@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## `network_resource_non_pdf:200`
+
+The publisher endpoint returned HTTP 200 but the body was HTML rather than a PDF.
+
+Common causes:
+
+- Wiley redirected `/pdfdirect/` to an enhanced-PDF or authentication page
+- Canadian Science Publishing returned the article/challenge page
+- AIP redirected `article-pdf` back to `article-abstract`
+- IEEE returned `stamp.jsp`, SeamlessAccess, or sign-in HTML without an authorized PDF iframe
+
+What to do:
+
+1. open the failed article in the same dedicated browser
+2. complete lawful publisher or institutional sign-in and any manual challenge
+3. click the PDF action once
+4. retry only the failed rows
+
+Never rename the returned HTML to `.pdf`; the fetcher requires a `%PDF-` signature.
+
+## Edge opens its internal PDF viewer but no file is saved
+
+The Chromium fetcher now checks the real child PDF target after navigation. Use `--download-wait-seconds 45` or `60` if the iframe appears slowly. Keep the resolved journal subdomain intact for Wiley/AGU; changing it to the generic Wiley host can lose the authorized route.
+
 ## `no_pdf_metadata`
 
 Common causes:
@@ -28,6 +52,22 @@ What to do:
 - increase `PageWaitSeconds`
 - keep `InterItemSleepSeconds` at `5+`
 - manually test one failed DOI in the same session
+- if the page already exposed a signed `pdf.sciencedirectassets.com` URL, prefer rerunning with the current Chrome or Edge DevTools path instead of relying only on the in-viewer extractor
+
+## `viewer_extract_failed` with a valid ScienceDirect signed URL
+
+Common causes:
+
+- the signed PDF URL is valid only inside the current authorized browser context
+- a direct HTTP fetch outside the page context gets `403 Forbidden`
+- the browser extension PDF viewer changed the page shape before PDF.js finished loading
+
+What to do:
+
+1. keep the same Chrome or Edge window open
+2. disable PDF-handling extensions in the next fresh session
+3. retry one row first
+4. use the current DevTools fetcher, which now prefers in-page fetch for ScienceDirect signed URLs before falling back to viewer extraction
 
 ## The browser keeps showing bot verification pages
 
@@ -42,6 +82,16 @@ What to do:
 - finish the bot verification in the same Chrome or Edge window
 - open a real article and its PDF manually first
 - avoid opening too many articles quickly
+
+## Probe says challenge page, but also shows PDF metadata
+
+This can happen on ScienceDirect.
+
+What to do:
+
+1. trust the positive signals first: `has_view_pdf=true`, `has_pdf_metadata=true`, or a populated `pdf_url`
+2. run a one-row probe download before the full batch
+3. only continue to the full batch after that probe row is saved successfully
 
 ## The fetcher cannot attach to the session
 
@@ -64,6 +114,19 @@ bash ./scripts/launch_chrome_clone_remote_debug_macos.sh \
 
 If you reuse a live profile, close all browser windows first. The recommended path is to use the dedicated launcher and isolated user-data directory instead.
 
+## Chrome or Edge opens `extension://.../pdfjs/web/viewer.html?file=...`
+
+Common causes:
+
+- Adobe or another PDF-handling extension intercepted the PDF
+- the extension wrapped the real short-lived ScienceDirect URL in its own viewer page
+
+What to do:
+
+1. start a fresh Chrome session with `--disable-extensions`
+2. prefer `--one-shot-profile` for a clean run
+3. do not reuse an old `file=` link after a few minutes; ScienceDirect signed URLs expire quickly
+
 ## Article rows with only DOI and no candidate URLs
 
 This is supported. The fetcher will open `https://doi.org/<doi>` first.
@@ -71,3 +134,16 @@ This is supported. The fetcher will open `https://doi.org/<doi>` first.
 ## Network-specific access problems
 
 This workflow does not solve access or routing problems by itself. If your institution requires a specific network path, VPN split tunneling, or campus egress route, fix that first and then rerun the workflow.
+
+## Recommended default for ScienceDirect after repeated failures
+
+Use a fresh one-shot Chrome session on macOS:
+
+```bash
+bash ./scripts/launch_chrome_clone_remote_debug_macos.sh \
+  --direct-connection \
+  --disable-extensions \
+  --one-shot-profile \
+  --remote-debugging-port 9222 \
+  --url "https://doi.org/<doi>"
+```

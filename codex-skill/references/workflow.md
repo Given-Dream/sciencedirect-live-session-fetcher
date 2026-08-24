@@ -1,4 +1,4 @@
-# Workflow
+# Publisher Live-Session Workflow
 
 ## 1. Prepare a dedicated Chrome session on macOS
 
@@ -35,7 +35,12 @@ In the opened Chrome window:
 4. click `View PDF`, `Download PDF`, or open the PDF viewer once
 5. keep that window open
 
-For IEEE Xplore, sign in through the institutional route first when off campus. A healthy manual session may eventually show `stamp.jsp` with an embedded `stampPDF/getPDF.jsp` PDF iframe, but the batch fetcher should start from the normal `document/<arnumber>` article page and let that page expose the authorized PDF route.
+Prepare the publisher needed by the batch:
+
+- Wiley/AGU: open the resolved journal subdomain and one `PDF` link
+- Canadian Science Publishing: pass the challenge page, if shown
+- AIP: open the article and its PDF action once
+- IEEE Xplore: sign in through the institutional route first when off campus; start from `document/<arnumber>` and let it expose `stamp.jsp` / `stampPDF/getPDF.jsp`
 
 The serial fetcher depends on the live browser session. If you close the window, the DevTools endpoint disappears and the run will fail.
 
@@ -65,12 +70,14 @@ bash ~/.codex/skills/sciencedirect-live-session-fetcher/scripts/run_devtools_sci
   --input-csv ./examples/input-template.csv \
   --out-dir ./out/run-001 \
   --page-wait-seconds 8 \
+  --download-wait-seconds 45 \
   --inter-item-sleep-seconds 6
 ```
 
 Recommended defaults:
 
 - `--page-wait-seconds`: `8`
+- `--download-wait-seconds`: `45`; increase to `60` for slow PDF viewers or large files
 - `--inter-item-sleep-seconds`: `5` to `8`
 
 Use longer sleeps if the site is sensitive to bursts.
@@ -82,7 +89,10 @@ For IEEE rows, prefer the IEEE article URL, for example `https://ieeexplore.ieee
 - `downloaded` rows are complete
 - `no_pdf_metadata` usually means the session does not yet have article/PDF access in that tab
 - `generic_pdf_fetch_failed` usually means a generic publisher PDF link was found but could not be fetched in the current browser context
+- `network_resource_non_pdf:200` in `note` means the official PDF-looking route returned HTML, commonly an authentication, abstract, or challenge page
 - `viewer_extract_failed` usually means the PDF viewer did not fully load or returned non-PDF content
+
+The Chromium route validates `%PDF-` before saving and supports, in order: page-context fetch, credentialed CDP resource load, navigation/download capture, Edge/Chrome PDF child-target extraction, and PDF.js extraction.
 
 ## 6. Retry only failed rows
 

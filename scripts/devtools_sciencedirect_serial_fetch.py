@@ -21,10 +21,12 @@ import csv
 import html
 import json
 import re
+import shutil
 import sys
 import time
+from collections import deque
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urljoin, urlparse
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -39,6 +41,10 @@ IEEE_ARTICLE_NUMBER_FIELD_RE = re.compile(
     r'"(?:articleNumber|arnumber|articleId|documentId)"\s*:\s*"?(\d{4,})"?',
     flags=re.I,
 )
+DOI_IN_URL_RE = re.compile(r"10\.\d{4,9}/[^?#\s]+", flags=re.I)
+WILEY_HOST_SUFFIX = "onlinelibrary.wiley.com"
+CDN_SCIENCE_HOST_SUFFIX = "cdnsciencepub.com"
+AIP_HOST_SUFFIX = "pubs.aip.org"
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +53,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", required=True, help="Output directory")
     parser.add_argument("--debug-port", type=int, default=9222, help="Chrome or Edge remote debugging port")
     parser.add_argument("--page-wait-seconds", type=int, default=8, help="Wait after opening each tab")
+    parser.add_argument(
+        "--download-wait-seconds",
+        type=int,
+        default=45,
+        help="Maximum wait for a publisher PDF response or browser download",
+    )
     parser.add_argument("--inter-item-sleep-seconds", type=int, default=8, help="Pause between rows")
     parser.add_argument("--limit", type=int, default=0, help="Only process the first N rows")
     return parser.parse_args()
@@ -97,11 +109,92 @@ def choose_article_url(row: dict[str, str]) -> str:
         lowered = url.lower()
         if "doi.org/" in lowered or "sciencedirect.com/" in lowered:
             return url
-    if urls:
-        return urls[0]
     if doi:
         return f"https://doi.org/{doi}"
+    if urls:
+        return urls[0]
     return ""
+
+
+def dedupe_urls(urls: list[str]) -> list[str]:
+    out = []
+    seen = set()
+    for url in urls:
+        value = html.unescape((url or "").strip())
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def publisher_name(doi: str, current_url: str) -> str:
+    host = (urlparse(current_url).netloc or "").lower()
+    doi_lower = (doi or "").lower()
+    if host.endswith(WILEY_HOST_SUFFIX) or doi_lower.startswith("10.1002/"):
+        return "wiley"
+    if host.endswith(CDN_SCIENCE_HOST_SUFFIX) or doi_lower.startswith("10.1139/"):
+        return "cdn_science"
+    if host.endswith(AIP_HOST_SUFFIX) or doi_lower.startswith("10.1063/"):
+        return "aip"
+    if host.endswith("ieeexplore.ieee.org") or doi_lower.startswith("10.1109/"):
+        return "ieee"
+    return "generic"
+
+
+def url_matches_article_identity(url: str, doi: str, current_url: str = "") -> bool:
+    decoded = unquote(url or "").lower()
+    doi_lower = (doi or "").strip().lower()
+    if doi_lower and doi_lower in decoded:
+        return True
+    expected_arnumber = extract_ieee_arnumber(current_url)
+    candidate_arnumber = extract_ieee_arnumber(url)
+    return bool(expected_arnumber and candidate_arnumber == expected_arnumber)
+
+
+def publisher_pdf_candidates(doi: str, current_url: str, discovered: list[str]) -> list[str]:
+    """Return publisher routes in the order most likely to yield real PDF bytes.
+
+    Only derive routes for the publisher that the DOI landing page resolved to.
+    The browser session still decides whether the user is authorized to receive them.
+    """
+    publisher = publisher_name(doi, current_url)
+    parsed = urlparse(current_url)
+    origin = f"{parsed.scheme or 'https'}://{parsed.netloc}" if parsed.netloc else ""
+    encoded_doi = quote((doi or "").strip(), safe="/")
+    candidates: list[str] = []
+
+    if publisher == "wiley" and origin and encoded_doi:
+        candidates.extend(
+            (
+                f"{origin}/doi/pdfdirect/{encoded_doi}",
+                f"{origin}/doi/pdf/{encoded_doi}",
+            )
+        )
+    elif publisher == "cdn_science" and origin and encoded_doi:
+        candidates.extend(
+            (
+                f"{origin}/doi/pdf/{encoded_doi}?download=true",
+                f"{origin}/doi/pdf/{encoded_doi}",
+            )
+        )
+
+    if publisher == "aip":
+        for url in discovered:
+            if "/article-pdf/" not in url.lower():
+                continue
+            candidates.append(url)
+            if "download=" not in url.lower():
+                separator = "&" if "?" in url else "?"
+                candidates.append(f"{url}{separator}download=true")
+
+    if publisher == "generic":
+        candidates.extend(discovered)
+    else:
+        candidates.extend(
+            url for url in discovered if url_matches_article_identity(url, doi, current_url)
+        )
+    return dedupe_urls(candidates)
 
 
 def extract_ieee_arnumber(text: str) -> str:
@@ -208,20 +301,38 @@ class DevToolsClient:
         except Exception:
             pass
 
-    def call(self, ws_url: str, method: str, params: dict | None = None, msg_id: int = 1) -> dict:
+    def call(
+        self,
+        ws_url: str,
+        method: str,
+        params: dict | None = None,
+        msg_id: int = 1,
+        timeout: int = 180,
+    ) -> dict:
         import websocket
 
-        ws = websocket.create_connection(ws_url, timeout=180, suppress_origin=True)
+        ws = websocket.create_connection(ws_url, timeout=timeout, suppress_origin=True)
         try:
             ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
             while True:
-                msg = json.loads(ws.recv())
+                try:
+                    msg = json.loads(ws.recv())
+                except websocket.WebSocketTimeoutException:
+                    return {"error": {"message": f"timeout waiting for {method}"}}
                 if msg.get("id") == msg_id:
                     return msg
         finally:
             ws.close()
 
-    def evaluate(self, ws_url: str, expression: str, *, await_promise: bool = False, msg_id: int = 1):
+    def evaluate(
+        self,
+        ws_url: str,
+        expression: str,
+        *,
+        await_promise: bool = False,
+        msg_id: int = 1,
+        timeout: int = 180,
+    ):
         msg = self.call(
             ws_url,
             "Runtime.evaluate",
@@ -231,10 +342,136 @@ class DevToolsClient:
                 "awaitPromise": await_promise,
             },
             msg_id=msg_id,
+            timeout=timeout,
         )
         if "error" in msg:
             return None
         return msg.get("result", {}).get("result", {}).get("value")
+
+
+class DevToolsSession:
+    """Persistent CDP connection for commands that share request IDs or streams."""
+
+    def __init__(self, ws_url: str, timeout: int = 20) -> None:
+        import websocket
+
+        self.websocket_module = websocket
+        self.ws = websocket.create_connection(ws_url, timeout=timeout, suppress_origin=True)
+        self.next_id = 10000
+        self.events: deque[dict] = deque()
+
+    def close(self) -> None:
+        self.ws.close()
+
+    def __enter__(self) -> "DevToolsSession":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+    def _receive(self, timeout: float) -> dict | None:
+        self.ws.settimeout(max(0.1, timeout))
+        try:
+            return json.loads(self.ws.recv())
+        except self.websocket_module.WebSocketTimeoutException:
+            return None
+
+    def command(self, method: str, params: dict | None = None, timeout: float = 60) -> dict:
+        msg_id = self.next_id
+        self.next_id += 1
+        self.ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            message = self._receive(deadline - time.time())
+            if message is None:
+                continue
+            if message.get("id") == msg_id:
+                return message
+            self.events.append(message)
+        return {"error": {"message": f"timeout waiting for {method}"}}
+
+    def next_event(self, timeout: float = 1.0) -> dict | None:
+        if self.events:
+            return self.events.popleft()
+        return self._receive(timeout)
+
+
+def cdp_result(message: dict) -> dict:
+    return message.get("result", {}) if isinstance(message, dict) else {}
+
+
+def decode_cdp_body(body: str, base64_encoded: bool) -> bytes:
+    if not body:
+        return b""
+    if base64_encoded:
+        try:
+            return base64.b64decode(body)
+        except Exception:
+            return b""
+    return body.encode("latin-1", errors="replace")
+
+
+def is_pdf_bytes(data: bytes | None) -> bool:
+    return bool(data and data[:5] == b"%PDF-")
+
+
+def fetch_pdf_bytes_via_network_resource(
+    ws_url: str,
+    pdf_url: str,
+    timeout_seconds: int = 20,
+) -> tuple[bytes | None, str]:
+    """Load a resource through Chromium's authenticated network context.
+
+    Network.loadNetworkResource is not subject to page JavaScript CORS checks and does
+    not export browser cookies. It still honors the live profile's access state.
+    """
+    try:
+        with DevToolsSession(ws_url) as session:
+            frame_tree = cdp_result(session.command("Page.getFrameTree", timeout=20)).get("frameTree", {})
+            frame_id = (frame_tree.get("frame") or {}).get("id", "")
+            if not frame_id:
+                return None, "network_resource_no_frame"
+            message = session.command(
+                "Network.loadNetworkResource",
+                {
+                    "frameId": frame_id,
+                    "url": pdf_url,
+                    "options": {"disableCache": False, "includeCredentials": True},
+                },
+                timeout=timeout_seconds,
+            )
+            resource = cdp_result(message).get("resource", {})
+            if not resource.get("success"):
+                status = resource.get("httpStatusCode", "")
+                return None, f"network_resource_failed:{status}"
+            stream = resource.get("stream", "")
+            if not stream:
+                return None, f"network_resource_no_stream:{resource.get('httpStatusCode', '')}"
+            chunks: list[bytes] = []
+            try:
+                while True:
+                    read_result = cdp_result(
+                        session.command("IO.read", {"handle": stream, "size": 1024 * 1024}, timeout=20)
+                    )
+                    chunk = decode_cdp_body(
+                        read_result.get("data", ""),
+                        bool(read_result.get("base64Encoded")),
+                    )
+                    if chunk:
+                        chunks.append(chunk)
+                    if read_result.get("eof"):
+                        break
+                    if not chunk and "data" not in read_result:
+                        return None, "network_resource_read_failed"
+            finally:
+                session.command("IO.close", {"handle": stream}, timeout=10)
+            data = b"".join(chunks)
+            if is_pdf_bytes(data):
+                return data, "cdp_network_resource"
+            status = resource.get("httpStatusCode", "")
+            return None, f"network_resource_non_pdf:{status}"
+    except Exception as exc:
+        return None, f"network_resource_error:{type(exc).__name__}"
 
 
 def extract_pdf_bytes_from_viewer(devtools: DevToolsClient, ws_url: str) -> bytes | None:
@@ -265,6 +502,7 @@ new Promise(resolve => {
         """.strip(),
         await_promise=True,
         msg_id=21,
+        timeout=15,
     )
     if not value or (isinstance(value, str) and value.startswith("ERR:")):
         return None
@@ -318,7 +556,7 @@ def fetch_pdf_bytes_from_signed_url(url: str) -> bytes | None:
         },
     )
     try:
-        with urlopen(req, timeout=60) as resp:
+        with urlopen(req, timeout=20) as resp:
             data = resp.read()
     except Exception:
         return None
@@ -330,7 +568,9 @@ def fetch_pdf_bytes_in_page(devtools: DevToolsClient, ws_url: str, pdf_url: str,
         ws_url,
         f"""
 new Promise(resolve => {{
-  fetch({json.dumps(pdf_url)}, {{ credentials: 'include' }})
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  fetch({json.dumps(pdf_url)}, {{ credentials: 'include', signal: controller.signal }})
     .then(resp => resp.arrayBuffer())
     .then(buf => {{
       const data = new Uint8Array(buf);
@@ -341,11 +581,13 @@ new Promise(resolve => {{
       }}
       resolve(btoa(binary));
     }})
-    .catch(err => resolve('ERR:' + String(err)));
+    .catch(err => resolve('ERR:' + String(err)))
+    .finally(() => clearTimeout(timer));
 }})
         """.strip(),
         await_promise=True,
         msg_id=msg_id,
+        timeout=20,
     )
     if not value or (isinstance(value, str) and value.startswith("ERR:")):
         return None
@@ -356,11 +598,273 @@ new Promise(resolve => {{
     return data if data.startswith(b"%PDF-") else None
 
 
+def response_looks_like_pdf(response: dict) -> bool:
+    url = (response.get("url") or "").lower()
+    mime = (response.get("mimeType") or "").lower()
+    headers = {str(key).lower(): str(value).lower() for key, value in (response.get("headers") or {}).items()}
+    content_type = headers.get("content-type", "")
+    disposition = headers.get("content-disposition", "")
+    return (
+        "application/pdf" in mime
+        or "application/pdf" in content_type
+        or ("attachment" in disposition and (".pdf" in disposition or "pdf" in content_type))
+        or any(marker in url for marker in (".pdf", "/pdf/", "/pdfdirect/", "/stamppdf/", "getpdf.jsp"))
+    )
+
+
+def response_matches_expected_pdf(response: dict, expected_url: str) -> bool:
+    if not response_looks_like_pdf(response):
+        return False
+    response_url = response.get("url") or ""
+    response_host = (urlparse(response_url).netloc or "").lower()
+    expected_host = (urlparse(expected_url).netloc or "").lower()
+    headers = {str(key).lower(): str(value).lower() for key, value in (response.get("headers") or {}).items()}
+    mime = (response.get("mimeType") or "").lower()
+    if "application/pdf" in mime or "application/pdf" in headers.get("content-type", ""):
+        return True
+    hosts_match = bool(
+        expected_host
+        and (
+            response_host == expected_host
+            or response_host.endswith(f".{expected_host}")
+            or expected_host.endswith(f".{response_host}")
+            or (
+                expected_host.endswith("sciencedirect.com")
+                and response_host.endswith("sciencedirectassets.com")
+            )
+        )
+    )
+    if not hosts_match:
+        return False
+    tokens = pdf_identity_tokens(expected_url)
+    lowered = unquote(response_url).lower()
+    return not tokens or any(token in lowered for token in tokens)
+
+
+def finished_pdf_in_directory(directory: Path) -> tuple[Path | None, bytes | None]:
+    if not directory.exists():
+        return None, None
+    for path in sorted(directory.rglob("*"), key=lambda item: item.stat().st_mtime if item.is_file() else 0, reverse=True):
+        if not path.is_file() or path.suffix.lower() in {".crdownload", ".tmp", ".partial"}:
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if is_pdf_bytes(data):
+            return path, data
+    return None, None
+
+
+def capture_pdf_navigation(
+    devtools: DevToolsClient,
+    pdf_url: str,
+    article_url: str,
+    target_parent: Path,
+    wait_seconds: int,
+) -> tuple[bytes | None, str, str]:
+    """Capture PDF bytes from a real Chromium navigation/download.
+
+    This path handles Edge's internal PDF viewer and attachment responses. Network
+    events are enabled before navigation so the raw PDF body can be collected before
+    Chromium hands it to the viewer.
+    """
+    page = None
+    download_dir: Path | None = None
+    target_parent.mkdir(parents=True, exist_ok=True)
+    try:
+        page = devtools.open_page("about:blank")
+        download_dir = target_parent / f"_publisher_download_{time.time_ns()}"
+        download_dir.mkdir(parents=False, exist_ok=False)
+        with DevToolsSession(page["webSocketDebuggerUrl"], timeout=15) as session:
+            session.command(
+                "Network.enable",
+                {
+                    "maxTotalBufferSize": 256 * 1024 * 1024,
+                    "maxResourceBufferSize": 256 * 1024 * 1024,
+                    "maxPostDataSize": 4 * 1024 * 1024,
+                },
+                timeout=5,
+            )
+            session.command("Page.enable", timeout=5)
+            session.command(
+                "Browser.setDownloadBehavior",
+                {
+                    "behavior": "allow",
+                    "downloadPath": str(download_dir),
+                    "eventsEnabled": True,
+                },
+                timeout=5,
+            )
+            navigate_params = {"url": pdf_url}
+            if article_url.startswith(("http://", "https://")):
+                navigate_params.update(
+                    {
+                        "referrer": article_url,
+                        "referrerPolicy": "strict-origin-when-cross-origin",
+                    }
+                )
+            session.command("Page.navigate", navigate_params, timeout=10)
+
+            candidates: dict[str, dict] = {}
+            completed = set()
+            last_url = pdf_url
+            page_loaded_at: float | None = None
+            deadline = time.time() + wait_seconds
+            while time.time() < deadline:
+                _, downloaded = finished_pdf_in_directory(download_dir)
+                if downloaded:
+                    return downloaded, last_url, "browser_download"
+
+                event = session.next_event(timeout=min(1.0, max(0.1, deadline - time.time())))
+                if not event:
+                    continue
+                method = event.get("method", "")
+                params = event.get("params", {})
+                if method == "Network.responseReceived":
+                    response = params.get("response", {})
+                    is_expected = response_matches_expected_pdf(response, pdf_url)
+                    if params.get("type") == "Document" or is_expected:
+                        last_url = response.get("url") or last_url
+                    if is_expected:
+                        candidates[params.get("requestId", "")] = response
+                elif method == "Network.loadingFinished":
+                    request_id = params.get("requestId", "")
+                    if request_id not in candidates or request_id in completed:
+                        continue
+                    completed.add(request_id)
+                    body_message = session.command(
+                        "Network.getResponseBody",
+                        {"requestId": request_id},
+                        timeout=15,
+                    )
+                    result = cdp_result(body_message)
+                    data = decode_cdp_body(result.get("body", ""), bool(result.get("base64Encoded")))
+                    if is_pdf_bytes(data):
+                        return data, candidates[request_id].get("url", last_url), "cdp_response_body"
+                elif method == "Browser.downloadWillBegin":
+                    last_url = params.get("url") or last_url
+                elif method == "Browser.downloadProgress" and params.get("state") == "completed":
+                    _, downloaded = finished_pdf_in_directory(download_dir)
+                    if downloaded:
+                        return downloaded, last_url, "browser_download"
+                elif method == "Page.loadEventFired":
+                    page_loaded_at = time.time()
+
+                if (
+                    page_loaded_at is not None
+                    and time.time() - page_loaded_at >= min(8.0, max(3.0, wait_seconds / 3))
+                    and all(request_id in completed for request_id in candidates)
+                ):
+                    break
+
+            for request_id, response in candidates.items():
+                if request_id in completed:
+                    continue
+                body_message = session.command(
+                    "Network.getResponseBody",
+                    {"requestId": request_id},
+                    timeout=15,
+                )
+                result = cdp_result(body_message)
+                data = decode_cdp_body(result.get("body", ""), bool(result.get("base64Encoded")))
+                if is_pdf_bytes(data):
+                    return data, response.get("url", last_url), "cdp_response_body_late"
+            _, downloaded = finished_pdf_in_directory(download_dir)
+            if downloaded:
+                return downloaded, last_url, "browser_download"
+            live_bytes, live_url = fetch_pdf_bytes_from_live_targets(devtools, article_url, pdf_url)
+            if live_bytes:
+                return live_bytes, live_url, "edge_pdf_target_fetch"
+            return None, last_url, "navigation_no_pdf_response"
+    except Exception as exc:
+        return None, pdf_url, f"navigation_capture_error:{type(exc).__name__}"
+    finally:
+        if page:
+            devtools.close_page(page["id"])
+        if download_dir and download_dir.exists():
+            shutil.rmtree(download_dir, ignore_errors=True)
+
+
+def pdf_identity_tokens(*urls: str) -> list[str]:
+    tokens = []
+    for url in urls:
+        decoded = unquote(url or "")
+        match = DOI_IN_URL_RE.search(decoded)
+        if match:
+            token = match.group(0).rstrip("/.").lower()
+            if token not in tokens:
+                tokens.append(token)
+        arnumber = extract_ieee_arnumber(decoded)
+        if arnumber and arnumber not in tokens:
+            tokens.append(arnumber)
+    return tokens
+
+
+def fetch_pdf_bytes_from_live_targets(
+    devtools: DevToolsClient,
+    article_url: str,
+    pdf_url: str,
+) -> tuple[bytes | None, str]:
+    """Fetch from the PDF's own iframe target after Edge opens its internal viewer."""
+    tokens = pdf_identity_tokens(article_url, pdf_url)
+    expected_host = (urlparse(pdf_url).netloc or "").lower()
+    for page in devtools.list_pages():
+        if page.get("type") not in {"iframe", "webview"}:
+            continue
+        candidate = extract_file_param_from_viewer_url(page.get("url", "")) or page.get("url", "")
+        lowered = unquote(candidate).lower()
+        if not candidate.startswith(("http://", "https://")):
+            continue
+        candidate_host = (urlparse(candidate).netloc or "").lower()
+        hosts_match = bool(
+            expected_host
+            and (
+                candidate_host == expected_host
+                or candidate_host.endswith(f".{expected_host}")
+                or expected_host.endswith(f".{candidate_host}")
+            )
+        )
+        if expected_host and not hosts_match:
+            continue
+        if tokens and not any(token in lowered for token in tokens):
+            continue
+        if score_pdf_url(candidate, "", page.get("type", "")) < 30:
+            continue
+        ws_url = page.get("webSocketDebuggerUrl", "")
+        if not ws_url:
+            continue
+        data = fetch_pdf_bytes_in_page(devtools, ws_url, candidate, msg_id=320)
+        if is_pdf_bytes(data):
+            return data, candidate
+        data, _ = fetch_pdf_bytes_via_network_resource(ws_url, candidate)
+        if is_pdf_bytes(data):
+            return data, candidate
+    return None, ""
+
+
 def normalize_pdf_url(current_url: str, value: str) -> str:
     value = (value or "").strip()
     if not value or value.startswith(("javascript:", "mailto:")):
         return ""
     return urljoin(current_url, html.unescape(value))
+
+
+def extract_pdf_urls_from_html(current_url: str, page_html: str) -> list[str]:
+    decoded = html.unescape(page_html or "")
+    decoded = decoded.replace(r"\/", "/").replace(r"\u002F", "/").replace(r"\u002f", "/")
+    pattern = re.compile(
+        r"(?:https?://|/)[^\s\"'<>]*?"
+        r"(?:article-pdf|pdfdirect|/doi/pdf/|\.pdf)"
+        r"[^\s\"'<>]*",
+        flags=re.I,
+    )
+    urls = []
+    for match in pattern.finditer(decoded):
+        url = normalize_pdf_url(current_url, match.group(0).rstrip(".,);"))
+        if url and score_pdf_url(url, "raw_html") >= 30:
+            urls.append(url)
+    return dedupe_urls(urls)
 
 
 def score_pdf_url(url: str, text: str, source: str = "") -> int:
@@ -374,6 +878,12 @@ def score_pdf_url(url: str, text: str, source: str = "") -> int:
         score += 55
     if "citation_pdf_url" in lowered:
         score += 50
+    if "/pdfdirect/" in lowered:
+        score += 70
+    if "/article-pdf/" in lowered:
+        score += 60
+    if "/doi/pdf/" in lowered:
+        score += 50
     if ".pdf" in lowered:
         score += 40
     if "/pdf" in lowered or "pdf/" in lowered:
@@ -382,12 +892,14 @@ def score_pdf_url(url: str, text: str, source: str = "") -> int:
         score += 20
     if "pdf" in lowered:
         score += 10
+    if "/epdf/" in lowered:
+        score -= 35
     if any(noise in lowered for noise in ("privacy", "cookie", "terms", "cover-image")):
         score -= 40
     return score
 
 
-def find_generic_pdf_url(devtools: DevToolsClient, ws_url: str, current_url: str, *, msg_id: int = 41) -> str:
+def find_generic_pdf_urls(devtools: DevToolsClient, ws_url: str, current_url: str, *, msg_id: int = 41) -> list[str]:
     candidates = devtools.evaluate(
         ws_url,
         """
@@ -439,10 +951,15 @@ def find_generic_pdf_url(devtools: DevToolsClient, ws_url: str, current_url: str
             ) or ""
             arnumber = extract_ieee_arnumber(text)
         if arnumber and is_ieee_document_url(current_url):
-            return ieee_stamp_url(arnumber)
-        return ""
+            return [ieee_stamp_url(arnumber)]
+        return []
     ranked.sort(reverse=True)
-    return ranked[0][1]
+    return dedupe_urls([url for _, url in ranked])
+
+
+def find_generic_pdf_url(devtools: DevToolsClient, ws_url: str, current_url: str, *, msg_id: int = 41) -> str:
+    urls = find_generic_pdf_urls(devtools, ws_url, current_url, msg_id=msg_id)
+    return urls[0] if urls else ""
 
 
 def current_generic_pdf_tabs(devtools: DevToolsClient, article_url: str, pii: str = "") -> list[str]:
@@ -450,6 +967,7 @@ def current_generic_pdf_tabs(devtools: DevToolsClient, article_url: str, pii: st
     article_host = urlparse(article_url).netloc.lower()
     article_number = extract_ieee_arnumber(article_url)
     for page in devtools.list_pages():
+        page_type = page.get("type", "")
         url = page.get("url", "")
         file_url = extract_file_param_from_viewer_url(url)
         candidate = file_url or url
@@ -461,6 +979,8 @@ def current_generic_pdf_tabs(devtools: DevToolsClient, article_url: str, pii: st
             continue
         if article_number and article_number in candidate and "ieeexplore.ieee.org/stamppdf/getpdf.jsp" in lowered:
             urls.append(candidate)
+            continue
+        if page_type not in {"iframe", "webview"}:
             continue
         if article_host and article_host in urlparse(candidate).netloc.lower() and score_pdf_url(candidate, "") >= 60:
             urls.append(candidate)
@@ -551,11 +1071,13 @@ def download_generic_pdf_url(
     pdf_url: str,
     target_path: Path,
     page_wait_seconds: int,
+    download_wait_seconds: int,
     pii: str = "",
 ) -> tuple[bool, str, str]:
-    candidates = [pdf_url, *current_generic_pdf_tabs(devtools, article_url, pii)]
+    candidates = [pdf_url]
     seen = set()
     pdf_page = None
+    attempts = []
 
     try:
         for candidate in candidates:
@@ -566,6 +1088,23 @@ def download_generic_pdf_url(
             if pdf_bytes:
                 save_pdf_bytes(target_path, pdf_bytes)
                 return True, candidate, "generic_in_page_fetch"
+            pdf_bytes, method = fetch_pdf_bytes_via_network_resource(article_ws_url, candidate)
+            attempts.append(f"{method}:{candidate}")
+            if pdf_bytes:
+                save_pdf_bytes(target_path, pdf_bytes)
+                return True, candidate, method
+
+        captured, captured_url, method = capture_pdf_navigation(
+            devtools,
+            pdf_url,
+            article_url,
+            target_path.parent,
+            download_wait_seconds,
+        )
+        attempts.append(f"{method}:{captured_url}")
+        if captured:
+            save_pdf_bytes(target_path, captured)
+            return True, captured_url, method
 
         pdf_page = devtools.open_page(pdf_url)
         time.sleep(page_wait_seconds)
@@ -578,6 +1117,14 @@ def download_generic_pdf_url(
             or extract_signed_pdf_url_from_text(viewer_html)
             or find_generic_pdf_url(devtools, pdf_ws_url, viewer_url or pdf_url, msg_id=72)
         )
+        live_target_bytes, live_target_url = fetch_pdf_bytes_from_live_targets(
+            devtools,
+            article_url,
+            nested_url or pdf_url,
+        )
+        if live_target_bytes:
+            save_pdf_bytes(target_path, live_target_bytes)
+            return True, live_target_url, "edge_pdf_target_fetch"
         for candidate in [nested_url, viewer_url, pdf_url, *current_generic_pdf_tabs(devtools, article_url, pii)]:
             if not candidate or candidate in seen:
                 continue
@@ -587,16 +1134,12 @@ def download_generic_pdf_url(
                 if pdf_bytes:
                     save_pdf_bytes(target_path, pdf_bytes)
                     return True, candidate, label
-            pdf_bytes = fetch_pdf_bytes_from_signed_url(candidate)
-            if pdf_bytes:
-                save_pdf_bytes(target_path, pdf_bytes)
-                return True, candidate, "generic_http_fetch"
-
         pdf_bytes = extract_pdf_bytes_from_viewer(devtools, pdf_ws_url)
         if pdf_bytes:
             save_pdf_bytes(target_path, pdf_bytes)
             return True, pdf_url, "generic_pdfjs_extract"
-        return False, pdf_url, "generic_pdf_fetch_failed"
+        detail = " | ".join(attempts[-4:])
+        return False, pdf_url, f"generic_pdf_fetch_failed:{detail}"[:500]
     finally:
         if pdf_page:
             devtools.close_page(pdf_page["id"])
@@ -607,6 +1150,7 @@ def download_ieee_pdf_from_article_context(
     article_ws_url: str,
     article_url: str,
     target_path: Path,
+    download_wait_seconds: int,
 ) -> tuple[bool, str, str]:
     arnumber = extract_ieee_arnumber(article_url)
     if not arnumber:
@@ -616,7 +1160,25 @@ def download_ieee_pdf_from_article_context(
     if pdf_bytes:
         save_pdf_bytes(target_path, pdf_bytes)
         return True, pdf_url, "ieee_article_context_fetch"
-    return False, pdf_url, "ieee_article_context_fetch_failed"
+    pdf_bytes, method = fetch_pdf_bytes_via_network_resource(article_ws_url, pdf_url)
+    if pdf_bytes:
+        save_pdf_bytes(target_path, pdf_bytes)
+        return True, pdf_url, f"ieee_{method}"
+
+    attempts = [method]
+    for candidate in (ieee_stamp_url(arnumber), pdf_url):
+        pdf_bytes, source_url, capture_method = capture_pdf_navigation(
+            devtools,
+            candidate,
+            article_url,
+            target_path.parent,
+            download_wait_seconds,
+        )
+        attempts.append(capture_method)
+        if pdf_bytes:
+            save_pdf_bytes(target_path, pdf_bytes)
+            return True, source_url, f"ieee_{capture_method}"
+    return False, pdf_url, f"ieee_pdf_fetch_failed:{'|'.join(attempts)}"[:500]
 
 
 def process_row(
@@ -624,6 +1186,7 @@ def process_row(
     row: dict[str, str],
     pdf_dir: Path,
     page_wait_seconds: int,
+    download_wait_seconds: int,
 ) -> dict[str, str]:
     article_url = choose_article_url(row)
     target_name = make_target_name(row["number"], row.get("title", ""), row.get("doi", ""))
@@ -642,6 +1205,7 @@ def process_row(
 
     article_page = None
     pdf_page = None
+    platform_failure_note = ""
     try:
         article_page = devtools.open_page(article_url)
         time.sleep(page_wait_seconds)
@@ -716,6 +1280,7 @@ def process_row(
                 article_page["webSocketDebuggerUrl"],
                 current_url,
                 target_path,
+                download_wait_seconds,
             )
             if ok:
                 return {
@@ -725,19 +1290,35 @@ def process_row(
                     "source_url": source_url,
                     "note": note,
                 }
+            platform_failure_note = note
             # Continue into generic discovery for older or unusual IEEE layouts.
         match = PDF_RE.search(article_html)
         if not match:
-            generic_pdf_url = find_generic_pdf_url(
+            discovered_urls = find_generic_pdf_urls(
                 devtools,
                 article_page["webSocketDebuggerUrl"],
                 current_url,
                 msg_id=13,
             )
-            if not generic_pdf_url:
-                live_candidates = current_generic_pdf_tabs(devtools, current_url)
-                generic_pdf_url = live_candidates[0] if live_candidates else ""
-            if generic_pdf_url:
+            raw_html_urls = extract_pdf_urls_from_html(current_url, article_html)
+            note_pdf_urls = [
+                url
+                for url in extract_urls(row.get("note", ""))
+                if score_pdf_url(url, "input_note") >= 30
+            ]
+            live_candidates = current_generic_pdf_tabs(devtools, current_url)
+            current_publisher = publisher_name((row.get("doi") or "").strip(), current_url)
+            generic_pdf_urls = publisher_pdf_candidates(
+                (row.get("doi") or "").strip(),
+                current_url,
+                [*discovered_urls, *raw_html_urls, *note_pdf_urls, *live_candidates],
+            )[:4]
+            failures = [platform_failure_note] if platform_failure_note else []
+            for candidate_index, generic_pdf_url in enumerate(generic_pdf_urls, start=1):
+                print(
+                    f"    -> trying {current_publisher} "
+                    f"PDF route {candidate_index}/{len(generic_pdf_urls)}"
+                )
                 ok, source_url, note = download_generic_pdf_url(
                     devtools,
                     article_page["webSocketDebuggerUrl"],
@@ -745,8 +1326,18 @@ def process_row(
                     generic_pdf_url,
                     target_path,
                     page_wait_seconds,
+                    download_wait_seconds,
                 )
                 if ok:
+                    if current_publisher != "generic" and not url_matches_article_identity(
+                        generic_pdf_url,
+                        (row.get("doi") or "").strip(),
+                        current_url,
+                    ):
+                        if target_path.exists():
+                            target_path.unlink()
+                        failures.append(f"candidate_identity_mismatch:{generic_pdf_url}")
+                        continue
                     return {
                         **row,
                         "status": "downloaded",
@@ -754,12 +1345,22 @@ def process_row(
                         "source_url": source_url,
                         "note": note,
                     }
+                failures.append(f"{generic_pdf_url} => {note}")
+            if generic_pdf_urls:
                 return {
                     **row,
                     "status": "generic_pdf_fetch_failed",
                     "pdf_path": "",
-                    "source_url": source_url,
-                    "note": note,
+                    "source_url": generic_pdf_urls[-1],
+                    "note": " || ".join(failures)[-500:],
+                }
+            if platform_failure_note:
+                return {
+                    **row,
+                    "status": "publisher_pdf_fetch_failed",
+                    "pdf_path": "",
+                    "source_url": current_url,
+                    "note": platform_failure_note,
                 }
             snippet = (article_html[:500] or title)[:500]
             return {
@@ -853,7 +1454,22 @@ def main() -> int:
     for index, row in enumerate(rows, start=1):
         doi = row.get("doi", "")
         print(f"[{index}/{len(rows)}] devtools serial fetch | {doi}")
-        result = process_row(devtools, row, pdf_dir, args.page_wait_seconds)
+        try:
+            result = process_row(
+                devtools,
+                row,
+                pdf_dir,
+                args.page_wait_seconds,
+                args.download_wait_seconds,
+            )
+        except Exception as exc:
+            result = {
+                **row,
+                "status": "runtime_error",
+                "pdf_path": "",
+                "source_url": choose_article_url(row),
+                "note": f"{type(exc).__name__}: {exc}"[:500],
+            }
         results.append(result)
         print(f"    -> {result['status']}")
         if index < len(rows) and args.inter_item_sleep_seconds > 0:
@@ -892,6 +1508,7 @@ def main() -> int:
         f"output_dir: {out_dir}",
         f"debug_port: {args.debug_port}",
         f"page_wait_seconds: {args.page_wait_seconds}",
+        f"download_wait_seconds: {args.download_wait_seconds}",
         f"inter_item_sleep_seconds: {args.inter_item_sleep_seconds}",
     ]
     write_utf8_no_bom(summary_txt, "\n".join(summary_lines) + "\n")

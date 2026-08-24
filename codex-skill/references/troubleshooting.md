@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## `network_resource_non_pdf:200`
+
+The publisher endpoint returned HTTP 200 but the body was HTML rather than a PDF.
+
+Common causes:
+
+- Wiley redirected `/pdfdirect/` to an enhanced-PDF or authentication page
+- Canadian Science Publishing returned the article/challenge page
+- AIP redirected `article-pdf` back to `article-abstract`
+- IEEE returned `stamp.jsp`, SeamlessAccess, or sign-in HTML without an authorized PDF iframe
+
+What to do:
+
+1. open the failed article in the same dedicated browser
+2. complete lawful publisher or institutional sign-in and any manual challenge
+3. click the PDF action once
+4. retry only the failed rows
+
+Never rename the returned HTML to `.pdf`; the fetcher requires a `%PDF-` signature.
+
+## Edge opens its internal PDF viewer but no file is saved
+
+The Chromium fetcher now checks the real child PDF target after navigation. Use `--download-wait-seconds 45` or `60` if the iframe appears slowly. Keep the resolved journal subdomain intact for Wiley/AGU; changing it to the generic Wiley host can lose the authorized route.
+
 ## `no_pdf_metadata`
 
 Common causes:

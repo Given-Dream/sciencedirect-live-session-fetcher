@@ -13,6 +13,8 @@ param(
 
     [int]$PageWaitSeconds = 8,
 
+    [int]$DownloadWaitSeconds = 45,
+
     [int]$InterItemSleepSeconds = 8,
 
     [int]$Limit = 0
@@ -40,6 +42,7 @@ $args = @(
     "--out-dir", $OutDir,
     "--debug-port", $DebugPort,
     "--page-wait-seconds", $PageWaitSeconds,
+    "--download-wait-seconds", $DownloadWaitSeconds,
     "--inter-item-sleep-seconds", $InterItemSleepSeconds
 )
 
